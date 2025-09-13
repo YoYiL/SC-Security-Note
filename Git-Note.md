@@ -1,6 +1,10 @@
 Git Note
+
 Author: YoYiL
+
 reference: [Learn Git Branching](https://learngitbranching.js.org/?locale=zh_CN&NODEMO=)
+
+
 
 - [git基础篇](#git基础篇)
   - [git commit](#git-commit)
