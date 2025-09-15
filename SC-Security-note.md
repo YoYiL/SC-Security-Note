@@ -574,25 +574,600 @@ A last takeaway from Tincho:
 
 ## Reconnaissance
 
-### Recon: Context
+### Recon: Context 
 
+#### First Step: Understanding The Codebase
 
+If we're following `The Tincho` method, our first step is going to be reading the docs and familiarizing ourselves with the codebase. In VS Code, you can click on the `README.MD` file in your workspace and use the command `CTRL + SHIFT + V` to open the preview mode of this document.
+
+> You can also open the preview pane by opening your command pallet and typing `markdown open preview`.
+
+*Quick tip: Check if an extension must be installed for VS Code if it's not working for you.*
+
+Already, we should be thinking about potential attack vectors with the information we've gleaned.
+
+*Is there any way for an unauthorized user to access a stored password?*
+
+Once you've finished reading through the documentation, we can proceed to...
+
+#### Scoping Out The Files（Solidity Metrics）
+
+![context3](SC-Security-note.assets/context3.png)
+
+Applying Tincho's methodology to this process, we can:
+
+1. Scroll down to the section containing the various files and their lengths.
+2. Copy this info and paste it onto any platform that allows for easy viewing and comparison— like Google Sheets or Notion.
+
+> Please note that if your codebase contains a solitary file like ours, this step won't be necessary.
+
+Some aspects I'll draw your attention to in this metrics report are the `Inheritance Graph`, `The Call Graph`, and `The Contracts Summary`. It's not super obvious with such a simple protocol, but these are going to provide valuable insight down the line. Familiarize yourself with them now (way at the bottom).
+
+![context6](SC-Security-note.assets/context6.png)
 
 ### Recon: Understanding the Code
 
+#### How Tincho Cracked the Code
 
+Tincho, was very pragmatic in his approach, literally going through the code line by line. This method might seem like he was looking for bugs/vulnerabilities in the code. But actually, he was just trying to understand the codebase better. In essence, understanding the functionalities and architecture of the code forms the first and most important part of code inspection.
+
+So let's take it from the top, just like Tincho did…
+
+#### Understanding What the Codebase Is Supposed to Do
+
+Our client's documentation has let us know what the intended functionality of the protocol are. Namely: A user should be able to store and retrieve their password, no one else should be able to see it.
+
+#### Scanning the Code from the Top
+
+After gaining a fundamental understanding, you can start going through the code. You can jump directly to the main functionality. However, to keep things simple, let's just start right from the top and start working our way down.
+
+The open source license seems fine. A compiler version of `0.8.18` may not be an immediate concern, but we do know that this isn't the most recent compiler version. It may be worthwhile to make note of this to come back to.
+
+```
+// SPDX-License-Identifier: MIT
+
+pragma solidity 0.8.18; // Q: Is this the correct compiler version?
+```
+
+Formatting our in-line comments in a reliable way will allow us to easily come back to these areas later by leveraging search.
+
+![understanding1](SC-Security-note.assets/understanding1.png)
+
+#### Taking Notes
+
+As Tincho had advised, creating a separate file to dump thoughts into and compile notes can be a valuable organizational tool. I like to open a file called `.notes.md` and outline things like potential `attack vectors`
+
+> **Pro Tip**: Some security researchers, like 0Kage from the Cyfrin team, even print the source code and use different colour highlighters to visualize the codebase better.
+
+#### Moving Further
+
+Next we see some `NatSpec` comments like this can be considered **extended documentation** and will tell us more about what the protocol is expected to do.
+
+![understanding2](SC-Security-note.assets/understanding2.png)
+
+**Hypothetically**, were the naming conventions poor, we might want to make an informational note.
+
+```solidity
+contract PasswordStore {
+
+   // I - naming convention could be more clear ie 'error PasswordStore__NotOwner();'
+   error NotOwner();
+
+}
+```
+
+In the example above we use `// I` for `informational` findings, but use what feels right for you.
+
+> **Pro Tip** - I like to use a package called [**headers**](https://github.com/transmissions11/headers) by `transmissions11`. It allows me to clearly label areas of a repo I'm reviewing.
+
+#### Looking at Functions
+
+Were things less clear, it may be appropriate to leave a note to ask the client.
+
+```
+// Q What's this function do?
+```
+
+It can't be stressed enough, clarity in our understanding of the codebase and the intended functionalities are a *necessary* part of performing a security review.
 
 ## Exploit
 
 ### Exploit: Accsess Control
 
+#### The First Vulnerability
 
+The function's `NatSpec` gives us a clear `invariant` - "..only the owner..". This should serve as a clue for what to look for and we should as ourselves...
+
+> *Can anyone **other** than the **owner** call this function?*
+
+At first glance, there doesn't seem to be anything preventing this. I think we've found something! Let's be sure to make notes of our findings as we go.
+
+```solidity
+    /*
+     * @notice This function allows only the owner to set a new password.
+     * @param newPassword The new password to set.
+     */
+    // @Audit - High - any user can set a password.
+    function setPassword(string memory newPassword) external {
+        s_password = newPassword;
+        emit SetNetPassword();
+    }
+```
+
+#### The Bug Explained
+
+What we've found is a fairly common vulnerability that protocols overlook. `Access Control` effectively describes a situation where inadequate or inappropriate limitations have been places on a user's ability to perform certain actions.
+
+In our simple example - only the owner of the protocol should be able to call `setPassword()`, but in its current implementation, this function can be called by anyone.
+
+I'll stress again the value of **taking notes throughout this process**. In-line comments, formatted properly are going to make returning to these vulnerabilities later for reassessment much easier and will keep you organized as you go.
+
+```
+// @Audit - Any user can set a password - Access Control
+```
+
+**Clear and concise notes are key.**
 
 ### Exploit: Public Data
 
+Starting, starting as always with the `NatSpec` documentation, we see a couple things to note:
+
+- Only the owner should be able to retrieve the password (*your `access control` bells should be ringing*)
+- The function should take the parameter `newPassword`.
+
+We see a problem on the very next line. This function *doesn't take* a parameter. Certainly informational, but let's make a note of it.
+
+```solidity
+/*
+* @notice This allows only the owner to retrieve the password.
+* @param newPassword The new password to set.
+*/
+function getPassword() external view returns (string memory) {
+    if (msg.sender != s_owner) {
+    revert PasswordStore__NotOwner();
+    }
+    return s_password;
+}
+```
+
+![public-data1](SC-Security-note.assets/public-data1.png)
+
+We've uncovered a major flaw in the business logic of this protocol. It's best we make a note of this.
+
+```solidity
+address private s_owner;
+// @Audit - s_password variable is not actually private! Everything on the blockchain is public, this is not a safe place to store your password.
+string private s_password;
+```
+
+![public-data2](SC-Security-note.assets/public-data2.png)
+
+## Protocol Tests
+
+![protocol-tests1](SC-Security-note.assets/protocol-tests1.png)
+
+As security researchers our job is to ultimately do what's necessary to make a protocol more secure. While we've thoroughly examined everything within scope of `PasswordStore` there can be some value in expanding our recon.
+
+Test suites should be an expectation of any protocol serious about security, assuring adequate test coverage will be valuable in a `private audit`.
+
+![protocol-tests2](SC-Security-note.assets/protocol-tests2.png)
+
+Wow! Our coverage looks great...right? It's important to note that coverage may be a vanity metric and not truly representative of what's being tested for. If we look closely at the tests included, we can see the a major vulnerability we found (`Access Control`) wasn't tested for at all.
+
+In addition to the above, tests aren't going to catch problems with documentation, or erroneous business logic. ==It's important not to assume things are fine because our framework tells us so.==
+
+## Writing an Amazing Finding(Finding #1)
+
+### Phase #4: Reporting
+
+After the identification phase, we are tasked with communicating our findings to the protocol. This phase is crucial on several levels:
+
+1. We need to convince the protocol that the identified vulnerabilities are valid.
+2. We must illustrate how severe/impactful the issue is
+3. We should also help the protocol with mitigation strategies.
+
+By effectively communicating this information, we position ourselves as educators, helping the protocol understand **why** these vulnerabilities are issues, **why** they were overlooked, and **how** to fix them to avoid running into the same issues in the future.
+
+**Writing Your First Finding**
+
+Now comes an incredibly exciting part - doing a minimalistic write up of the vulnerabilities you've found.
+
+We've prepared a finding template for you, accessible in the course's [**GitHub Repo**](https://github.com/Cyfrin/security-and-auditing-full-course-s23/blob/main/finding_layout.md).
+
+Open a new file in your project titled `audit-data`, download and copy `finding_layout.md` into this folder.
+
+It should look like this when previewed (`CTRL + SHIFT + V`):
+
+```markdown
+#### [S-#] TITLE (Root Cause + Impact)
+
+**Description:**
+
+**Impact:**
+
+**Proof of Concept:**
+
+**Recommended Mitigation:**
+```
+
+You can customize this however you like, but this minimalistic template is a great starting point.
+
+> Remember our goals in this report:
+>
+> - illustrate that the issue is valid
+> - make clear the issue's severity and impact
+> - offer recommendation for mitigation
+
+### Writing an Amazing Finding: Title
+
+The report so far:
+
+![image-20250913205803633](SC-Security-note.assets/image-20250913205803633.png)
+
+The first thing we need to fill out is our report's title. We want to be concise while still communicating important details of the vulnerability. A good rule of thumb is that your title should include:
+
+> Root Cause + Impact
+
+So, we ask ourselves *what is the root cause of this finding, and what impact does it have?*
+
+For this finding the root cause would be something asking to:
+
+- **Storage variables on-chain are publicly visible**
+
+and the impact would be:
+
+- **anyone can view the stored password**
+
+Let's work this into an appropriate title for our finding (don't worry about `[S-#]`, we'll explain this more later).
+
+```
+### [S-#] Storing the password on-chain makes it visible to anyone and no longer private
+​
+**Description:**
+​
+**Impact:**
+​
+**Proof of Concept:**
+​
+**Recommended Mitigation:**
+```
+
+### Writing an Amazing Finding: Description
+
+Our goal here is to describe the vulnerability concisely while clearly illustrating the problem.
+
+![description1](SC-Security-note.assets/description1.png)
 
 
 
+```markdown
+### [S-#] Storing the password on-chain makes it visible to anyone and no longer private
+​
+**Description:** All data stored on chain is public and visible to anyone. The `PasswordStore::s_password` variable is intended to be hidden and only accessible by the owner through the `PasswordStore::getPassword` function.
+​
+I show one such method of reading any data off chain below.
+​
+**Impact:** Anyone is able to read the private password, severely breaking the functionality of the protocol.
+​
+**Proof of Concept:**
+​
+**Recommended Mitigation:**
+```
+
+### Writing an Amazing Finding: Proof of Code
+
+Foundry allows us to check the storage of a deployed contract with a very simple `cast` command. For this we'll need to recall to which storage slot the `s_password` variable is assigned.
+
+![proof-of-code1](SC-Security-note.assets/proof-of-code1.png)
+
+~~~markdown
+### [S-#] Storing the password on-chain makes it visible to anyone and no longer private 
+
+**Description:** All data stored on chain is public and visible to anyone. The `PasswordStore::s_password` variable is intended to be hidden and only accessible by the owner through the `PasswordStore::getPassword` function.
+
+I show one such method of reading any data off chain below.
+
+**Impact:** Anyone is able to read the private password, severely breaking the functionality of the protocol.
+
+**Proof of Concept:** The below test case shows how anyone could read the password directly from the blockchain. 
+
+We use foundry's cast tool to read directly from the storage of the contract, without being the owner.
+
+1.Create a locally running chain
+
+```
+make anvil
+```
+
+2.Deploy the contract to the chain
+
+```
+make deploy
+```
+
+3.Run the storage tool
+
+We use `1` because that's the storage slot of `s_password` in the contract.
+
+```
+cast storage <ADDRESS_HERE> 1 --rpc-url http://127.0.0.1:8545
+```
+
+You'll get an output that looks like this:
+
+```
+0x6d7950617373776f726400000000000000000000000000000000000000000014
+```
+
+You can then parse that hex to a string with:
+
+
+```
+cast parse-bytes32-string 0x6d7950617373776f726400000000000000000000000000000000000000000014
+```
+
+And get an output of:
+
+```
+myPassword
+```
+
+Recommended Mitigation:
+~~~
+
+### Writing an Amazing Finding: Recommended Mitigation
+
+~~~markdown
+### [S-#] Storing the password on-chain makes it visible to anyone and no longer private 
+
+**Description:** All data stored on chain is public and visible to anyone. The `PasswordStore::s_password` variable is intended to be hidden and only accessible by the owner through the `PasswordStore::getPassword` function.
+
+I show one such method of reading any data off chain below.
+
+**Impact:** Anyone is able to read the private password, severely breaking the functionality of the protocol.
+
+**Proof of Concept:** The below test case shows how anyone could read the password directly from the blockchain. 
+
+We use foundry's cast tool to read directly from the storage of the contract, without being the owner.
+
+1.Create a locally running chain
+
+```
+make anvil
+```
+
+2.Deploy the contract to the chain
+
+```
+make deploy
+```
+
+3.Run the storage tool
+
+We use `1` because that's the storage slot of `s_password` in the contract.
+
+```
+cast storage <ADDRESS_HERE> 1 --rpc-url http://127.0.0.1:8545
+```
+
+You'll get an output that looks like this:
+
+```
+0x6d7950617373776f726400000000000000000000000000000000000000000014
+```
+
+You can then parse that hex to a string with:
+
+
+```
+cast parse-bytes32-string 0x6d7950617373776f726400000000000000000000000000000000000000000014
+```
+
+And get an output of:
+
+```
+myPassword
+```
+
+**Recommended Mitigation:** Due to this, the overall architecture of the contract should be rethought. One could encrypt the password off-chain, and then store the encrypted password on-chain. This would require the user to remember another password off-chain to decrypt the stored password. However, you're also likely want to remove the view function as you wouldn't want the user to accidentally send a transaction with this decryption key.
+~~~
+
+
+
+## Access Control(Finding #2)
+
+### Access Control Writeup
+
+```markdown
+### [S-#] `PasswordStore::setPassword` has no access controls, meaning a non-owner could change the password
+​
+**Description:** The `PasswordStore::setPassword` function is set to be an `external` function, however the purpose of the smart contract and function's natspec indicate that `This function allows only the owner to set a new password.`
+​
+'''
+function setPassword(string memory newPassword) external {
+    // @Audit - There are no Access Controls.
+    s_password = newPassword;
+    emit SetNewPassword();
+}
+'''
+​
+**Impact:** Anyone can set/change the stored password, severely breaking the contract's intended functionality
+​
+**Proof of Concept:**
+​
+**Recommended Mitigation:**
+```
+
+### Missing Access Controls Proof of Code
+
+~~~markdown
+### [S-#] `PasswordStore::setPassword` has no access controls, meaning a non-owner could change the password
+​
+**Description:** The `PasswordStore::setPassword` function is set to be an `external` function, however the purpose of the smart contract and function's natspec indicate that `This function allows only the owner to set a new password.`
+​
+```
+function setPassword(string memory newPassword) external {
+    // @Audit - There are no Access Controls.
+    s_password = newPassword;
+    emit SetNewPassword();
+}
+```
+​
+**Impact:** Anyone can set/change the stored password, severely breaking the contract's intended functionality
+​
+**Proof of Concept:** Add the following to the PasswordStore.t.sol test file:
+​
+
+```
+function test_anyone_can_set_password(address randomAddress) public {
+       vm.assume(randomAddress != owner);
+       vm.startPrank(randomAddress);
+       string memory expectedPassword = "myNewPassword";
+       passwordStore.setPassword(expectedPassword);
+​
+       vm.startPrank(owner);
+       string memory actualPassword = passwordStore.>getPassword();
+       assertEq(actualPassword, expectedPassword);
+   }
+```
+
+​
+**Recommended Mitigation:** Add an access control conditional to `PasswordStore::setPassword`.
+​
+```
+if(msg.sender != s_owner){
+    revert PasswordStore__NotOwner();
+}
+```
+
+~~~
+
+## Finding Writeup Docs(Finding #3)
+
+~~~markdown
+### [S-#] The `PasswordStore::getPassword` natspec indicates a parameter that doesn't exist, causing the natspec to be incorrect.
+​
+**Description:**
+
+```
+/*
+   * @notice This allows only the owner to retrieve the password.
+@> * @param newPassword The new password to set.
+*/
+function getPassword() external view returns (string memory) {}
+```
+    
+The `PasswordStore::getPassword` function signature is `getPassword()` while the natspec says it should be `getPassword(string)`.
+
+
+**Impact:** The natspec is incorrect
+​
+**Recommended Mitigation:** Remove the incorrect natspec line.
+​
+```diff
+    /*
++     * @notice This allows only the owner to retrieve the password.
+-     * @param newPassword The new password to set.
+     */
+```
+~~~
+
+## Severity Rating
+
+reference: https://docs.codehawks.com/hawks-auditors/how-to-evaluate-a-finding-severity
+
+#### How to evaluate a finding severity
+
+The severity of a finding can be categorized as **High**, **Medium**, or **Low** and is determined based on several factors:
+
+1. **Impact on the protocol:** How severe would the potential damage be if the vulnerability were exploited
+2. **Likelihood of exploitation:** How probable would an attacker exploit this vulnerability?
+3. **Degree of judge/protocol subjectivity**
+
+**Severity Matrix**
+
+|                |            | **Impact** |            |         |
+| -------------- | ---------- | ---------- | ---------- | ------- |
+|                |            | **High**   | **Medium** | **Low** |
+|                | **High**   | H          | H/M        | M       |
+| **Likelihood** | **Medium** | H/M        | M          | M/L     |
+|                | **Low**    | M          | M/L        | L       |
+
+⚠️ **Subjectivity in Classification**
+
+While the Impact vs Likelihood matrix provides a structured approach, there remains a degree of subjectivity in classifying findings. The judge's discretion is pivotal in determining a finding's category.
+
+If the protocol under audit stipulates particular criteria, then those guidelines should be the benchmark for classifying findings.
+
+---
+
+#### How to evaluate the impact of a finding
+
+Impact refers to the potential harm or consequence to the users or the protocol due to the vulnerability.
+
+• **High Impact:**
+  ○ Funds are directly or nearly directly at risk.
+  ○ There's a severe disruption of protocol functionality or availability.
+
+• **Medium Impact:**
+  ○ Funds are indirectly at risk.
+  ○ There's some level of disruption to the protocol's functionality or availability.
+
+• **Low Impact:**
+  ○ Funds are not at risk.
+  ○ However, a function might be incorrect, the state might not be handled appropriately, etc.
+
+---
+
+#### How to evaluate the likelihood of exploitation of a finding
+
+Likelihood represents the probability of the impact occurring due to the vulnerability.
+
+▽ **High likelihood**
+
+It's highly probable to happen. For instance, a hacker can call a function directly and extract money.
+
+▽ **Medium likelihood**
+
+It might occur under specific conditions. For example, a peculiar ERC20 token is used on the platform.
+
+▽ **Low likelihood**
+
+It is unlikely to occur. An example might be if a hard-to-change variable is set to a unique value on a specific block.
+
+**Note** There are instances where the likelihood is deemed "computationally infeasible". For example, "An attacker could guess the user's private key". 
+
+The author must demonstrate that their finding is computationally feasible in such scenarios.
+
+
+
+#### Informational/Non-Crits/Gas Severity
+
+Anything that isn't a bug, but maybe should be considered anyway to make the code more readable etc - `Informational Severity` (sometimes called 'non-crits') There are also `Gas` severity findings, pertaining to gas optimizations, but we'll go over some of those a little later on.
+
+![image-20250914173616067](SC-Security-note.assets/image-20250914173616067.png)
+
+## Generate a PDF audit report
+
+1. Add all your findings to a markdown file like `report-example.md`
+   1. Add the metadata you see at the top of that file
+2. Install [pandoc](https://pandoc.org/installing.html) & [LaTeX](https://www.latex-project.org/get/)
+   1. You might also have to install [one more package](https://github.com/Wandmalfarbe/pandoc-latex-template/issues/141) if you get `File 'footnotebackref.sty' not found.`
+3. Download `eisvogel.latex` and add to your templates directory (should be `~/.pandoc/templates/`)
+4. Add your logo to the directory as a pdf named `logo.pdf`
+5. Run this command:
+
+```
+pandoc report-example.md -o report.pdf --from markdown --template=eisvogel --listings
+```
+
+## Isolated Dev Environments
+
+According to Chain Analysis, in 2024 the most popular type of attack was a private key leak. In this lesson we want to introduce to how to mitigate the risks of running malicious code on our host machine. This is important for any level of developer or security researcher.
+
+We will take a look at ways to protect our host machine against different attack vectors which all have one thing in common, running unvetted code on our host machine and giving it access to everything.
+
+The tool we are going to use to isolate the unvetted code is Docker containers or Dev containers, specifically Dev containers built directly into VS Code. The Red Guild has written an awesome blog on it which is linked in the description.
 
 
 
