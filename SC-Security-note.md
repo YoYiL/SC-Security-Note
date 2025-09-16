@@ -546,7 +546,7 @@ Tincho describes keeping an open line of communication with the client/protocol 
 
 > "I would advise to keep the clients at hand. Ask questions, but also be detached enough." - Tincho
 
-### Wrapping it Up
+### Wrapping it Up-Timeboxing
 
 Sometimes it can feel like there's no end to the approaches you can make to a codebase, no end to the lines of code you can check and verify.
 
@@ -1172,6 +1172,514 @@ The tool we are going to use to isolate the unvetted code is Docker containers o
 
 
 # Puppy Raffle
+
+## Scoping
+
+By using the command `git checkout <commitHash>` we can assure our local repo is the correct version to be auditing.
+
+We also see exactly which contracts are under review.
+
+```
+./src/
+└── PuppyRaffle.sol
+```
+
+Moving on, we should take notice of the **Compatibilities** section.
+
+![phase-1-scoping3](SC-Security-note.assets/phase-1-scoping3.png)
+
+That Solc version is strange - definitely make note of it.
+
+Finally, they've also outlined the Roles of the protocol for us. Knowing this intended functionality is important in being able to spot when things go wrong.
+
+
+
+## Tooling
+
+### Static Analysis - Boosting Your Auditing Efficiency
+
+![tooling-slither1](SC-Security-note.assets/tooling-slither1.png)
+
+Static analysis is a method where code is checked for potential issues without actually executing it. Essentially, it's a way to "debug" your code by looking for specific keywords in a certain order or pattern.
+
+The most widely used tools for this purpose include [**Slither**](https://github.com/crytic/slither), developed by the [**Trail of Bits**](https://www.trailofbits.com/) team, and a Rust-based tool that we've developed known as [**Aderyn**](https://github.com/Cyfrin/aderyn).
+
+> **Note**: It's important to remember that these tools should be run before going for an audit.
+
+### Slither - A Python-Powered Static Analysis Tool
+
+Slither tops the charts as the most popular and potentially the most potent static analysis tool available. Built using Python, it offers compatibility with both Solidity and Vyper developments. An open-source project, Slither allows developers to add plugins via PR.
+
+The Slither repo provides instructions on installation and usage.
+
+I want to bring your attention to the [**Detectors**](https://github.com/crytic/slither/wiki/Detector-Documentation) section of the documentation.
+
+This document lists *all* the vulnerabilities that Slither is checking for and recommendations for them.
+
+For example:
+
+![tooling-slither2](SC-Security-note.assets/tooling-slither2.png)
+
+This could have helped us with PasswordStore! It's easy to see how valuable these tools can be in making our work easier and more efficient.
+
+#### Running Slither
+
+The Slither documentation outlines usage for us. Slither will automatically detect if the project is a Hardhat, Foundry, Dapp or Brownie framework and compile things accordingly.
+
+In order to run slither on our current repo we just use the command:
+
+```
+slither .
+```
+
+This execution may take some time, depending on the size of the codebase. If we run it on Puppy Raffle, we're going to get a *massive* output of potential issues.
+
+The output color codes potential issues:
+
+- **Green** - Areas that are probably ok, may be `informational` findings, we may want to have a look
+- **Yellow** - Potential issue detected, we should probably take a closer look
+- **Red** - Significant issues detected that should absolutely be addressed.
+
+Here's an example of what some of these look like:
+
+![tooling-slither3](SC-Security-note.assets/tooling-slither3.png)
+
+
+
+### Aderyn-A Rust Based Static Analysis Tool
+
+The second powerful tool we'll be using in this course is a Rust-based analyzer, [**Aderyn**](https://github.com/Cyfrin/aderyn). This tool was created by the smart contract developer legend [**Alex Roan**](https://github.com/alexroan).
+
+![tooling-aderyn1](SC-Security-note.assets/tooling-aderyn1.png)
+
+#### Running Aderyn
+
+To run Aderyn, the command is `Aderyn [OPTIONS] <root>`. Since we're already in the root directory of our project, we can just run:
+
+```
+aderyn .
+```
+
+Running this command will compile our contracts, our terminal will display the usual compilation warnings - at the bottom of the output however, we can see *`Detectors run, printing report. Report printed to ./report.md`*
+
+We should see this fine in our IDE explorer. If we open it up...
+
+### Solidity Metrics Insights
+
+![tooling-svd1](SC-Security-note.assets/tooling-svd1.png)
+
+![tooling-svd2](SC-Security-note.assets/tooling-svd2.png)
+
+![tooling-svd3](SC-Security-note.assets/tooling-svd3.png)
+
+### Solidity Visual Developer
+
+![tooling-svd4](SC-Security-note.assets/tooling-svd4.png)
+
+
+
+
+
+## Recon(Reconnaissance)
+
+### Reading Docs
+
+Ok, we've scoped things out. Let's start with step 1 of `The Tincho` - Reading the documentation.
+
+What we've been provided is a little sparse - but read through the README of [**Puppy Raffle**](https://github.com/Cyfrin/4-puppy-raffle-audit).
+
+### Reading the Code
+
+What I like to do when first assessing a codebase is to start at the `main entry point`. Sometimes this area of a protocol may be a little unclear, but using Solidity: Metrics can help us out a lot.
+
+![reading-docs2](SC-Security-note.assets/reading-docs2.png)
+
+Pay special attention to the functions marked `public` or `external`. Especially those which `modify state` or are `payable`. These are going to be certain potential attack vectors.
+
+> **Note:** In Foundry you can use the command `forge inspect PuppyRaffle methods` to receive an output of methods for the contract.
+
+```solidity
+/// @notice this is how players enter the raffle
+/// @notice they have to pay the entrance fee * the number of players
+/// @notice duplicate entrants are not allowed
+/// @param newPlayers the list of players to enter the raffle
+function enterRaffle(address[] memory newPlayers) public payable {
+    require(msg.value == entranceFee * newPlayers.length, "PuppyRaffle: Must send enough to enter raffle");
+    for (uint256 i = 0; i < newPlayers.length; i++) {
+        players.push(newPlayers[i]);
+    }
+​
+    // Check for duplicates
+    for (uint256 i = 0; i < players.length - 1; i++) {
+        for (uint256 j = i + 1; j < players.length; j++) {
+            require(players[i] != players[j], "PuppyRaffle: Duplicate player");
+        }
+    }
+    emit RaffleEnter(newPlayers);
+}
+```
+
+Starting with the `NatSpec` we may have a few questions rise.
+
+- *What's meant by # of players?*
+- *How does the function prevent duplicate entrants?*
+
+Write questions like these in your `notes.md` or even as `@audit` notes inline. These are things we'll want to answer as we progress through the code.
+
+One thing I notice in our next few lines is - I don't really love their naming conventions. `entranceFee` is immutable and nothing in this function makes that clear to me (unless I'm using [**Solidity Visual Developer**](https://marketplace.visualstudio.com/items?itemName=tintinweb.solidity-visual-auditor)).
+
+### Reading Docs II
+
+A few additional details we notice as we traverse the function:
+
+- Our require statement compares to `newPlayers.length` - *what happens if this is 0?*
+- The `entranceFee` is an `immutable variable` - we can confirm this is initialized in the constructor.
+- The raffle is keeping track of who has entered the raffle by pushing each index of `newPlayers[]` to `players[]`.
+
+The last section of this function is finally our check for duplicates.
+
+```solidity
+// Check for duplicates
+for (uint256 i = 0; i < players.length - 1; i++) {
+    for (uint256 j = i + 1; j < players.length; j++) {
+        require(players[i] != players[j], "PuppyRaffle: Duplicate player");
+    }
+}
+```
+
+With experience you'll be able to *smell* bugs. You'll see messy blocks of code like the above and your intuition is going to kick in.
+
+
+
+## Exploit
+
+### sc-exploits-minimized
+
+In order to get a better understanding of this bug, let's look at a *minimized* example of it. If you reference the [**sc-exploits-minimized**](https://github.com/Cyfrin/sc-exploits-minimized) repo.
+
+![sc-exploits-minimized1](SC-Security-note.assets/sc-exploits-minimized1.png)
+
+This is an amazing resource to test your skills in general and familiarize yourself with common exploits. Additionally, the `src` folder of `sc-exploits-minimized` contains minimalistic examples of a variety of vulnerabilities as well.
+
+#### Remix, CTFs, & Challenge Examples
+
+A set of examples where you can see the attack in remix or practice it in a gameified way. 
+
+- The `Remix` links will bring you to a minimal example of the exploit.
+- The `Ethernaut` links will bring you to a challenge where that exploit exists in a "capture the flag". 
+- The `Damn Vulnerable DeFi` links will bring you to a challenge where that exploit exists in a difficult DeFi/OnChain Finance related "capture the flag". 
+
+
+
+<table border="1" style="border-collapse: collapse;">
+    <thead>
+        <tr>
+            <th>Exploit</th>
+            <th>Remix 🎧</th>
+            <th>Ethernaut 👩🏻‍🚀</th>
+            <th>Damn Vulnerable DeFi 💰</th>
+            <th>Case Studies 🔎</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>Reentrancy</td>
+            <td>
+            <a href="https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/reentrancy/Reentrancy.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Remix</a>
+            </td>
+            <td>
+            <a href="https://ethernaut.openzeppelin.com/level/10" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Re-entrancy</a>
+            </td>
+            <td>
+            <a href="https://www.damnvulnerabledefi.xyz/challenges/side-entrance/" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Side Entrance</a>
+            </td>
+            <td>
+            <a href="https://github.com/pcaversaccio/reentrancy-attacks" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">The Ultimate List </a>
+            </td>
+        </tr>
+        <tr>
+            <td>Arithmetic</td>
+            <td>
+            <a href="https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/arithmetic/OverflowAndUnderflow.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Remix</a>
+            </td>
+            <td>
+            <a href="https://ethernaut.openzeppelin.com/level/5" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Token</a>
+            </td>
+            <td>
+            None
+            </td>
+            <td>
+            Coming Soon...
+            </td>
+        </tr>
+        <tr>
+            <td>Denial Of Service (DoS)</td>
+            <td>
+            <a href="https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/denial-of-service/DoS.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Remix</a>
+            </td>
+            <td>
+            <a href="https://ethernaut.openzeppelin.com/level/20" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Denial</a>
+            </td>
+            <td>
+            <a href="https://www.damnvulnerabledefi.xyz/challenges/unstoppable/" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Unstoppable</a>
+            </td>
+            <td>
+            Coming Soon...
+            </td>
+        </tr>
+        <tr>
+            <td>Mishandling Of Eth</td>
+            <td>
+            <a href="https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/mishandling-of-eth/MishandlingOfEth.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Remix (Not using push over pull)</a>
+            </br>
+            <a href="https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/mishandling-of-eth/SelfDestructMe.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Remix (Vulnerable to selfdestruct)</a>
+            </td>
+            <td>
+            <a href="https://ethernaut.openzeppelin.com/level/9" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">King</a>
+            </td>
+            <td>
+            None
+            </td>
+            <td>
+            <a href="https://samczsun.com/two-rights-might-make-a-wrong/" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Sushi Swap</a>
+            </td>
+        </tr>
+        <tr>
+            <td>Weak Randomness</td>
+            <td>
+            <a href="https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/weak-randomness/WeakRandomness.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Remix</a>
+            </td>
+            <td>
+            <a href="https://ethernaut.openzeppelin.com/level/3" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Coin Flip</a>
+            </td>
+            <td>
+            None
+            </td>
+            <td>
+            <a href="https://forum.openzeppelin.com/t/understanding-the-meebits-exploit/8281" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Meebits</a>
+            </td>
+        </tr>
+        <tr>
+            <td>Missing Access Controls</td>
+            <td>
+            <a href="https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/missing-access-controls/MissingAccessControls.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Remix</a>
+            </td>
+            <td>
+            <a href="https://ethernaut.openzeppelin.com/level/2" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Fallout</a>
+            </td>
+            <td>
+            None
+            </td>
+            <td>
+            Coming Soon...
+            </td>
+        </tr>
+        <tr>
+            <td>Centralization</td>
+            <td>
+            <a href="https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/centralization/Centralization.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Remix</a>
+            </td>
+            <td>
+            None
+            </td>
+            <td>
+            <a href="https://www.damnvulnerabledefi.xyz/challenges/compromised/" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Compromised</a>
+            </td>
+            <td>
+            <a href="https://medium.com/@observer1/uk-court-ordered-oasis-to-exploit-own-security-flaw-to-recover-120k-weth-stolen-in-wormhole-hack-fcadc439ca9d" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Oasis</a>
+            And every rug pull ever.
+            </td>
+        </tr>
+        <tr>
+            <td>Failure to initialize</td>
+            <td>
+            <a href="https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/failure-to-initialize/FailureToInitialize.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Remix</a>
+            </td>
+            <td>
+            <a href="https://ethernaut.openzeppelin.com/level/25 " target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Motorbike</a>
+            </td>
+            <td>
+            <a href="https://www.damnvulnerabledefi.xyz/challenges/wallet-mining/ " target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Wallet Mining</a>
+            </td>
+            <td>
+            <a href="https://github.com/openethereum/parity-ethereum/issues/6995 " target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Parity Wallet</a>
+            </td>
+        </tr>
+        <tr>
+            <td>Storage Collision</td>
+            <td>
+            <a href="https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/storage-collision/StorageCollision.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Remix</a>
+            </td>
+            <td>
+            <a href="https://ethernaut.openzeppelin.com/level/16" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Preservation</a>
+            </td>
+            <td>
+            None
+            </td>
+            <td>
+            Coming Soon...
+            </td>
+        </tr>
+        <tr>
+            <td>Oracle/Price Manipulation</td>
+            <td>
+            (Click all of these)
+            <a href="https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/oracle-manipulation/OracleManipulation.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">OracleManipulation.sol</a>
+            </br>
+            <a href="https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/oracle-manipulation/BadExchange.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">BadExchange.sol</a>
+            </br>
+            <a href="https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/oracle-manipulation/FlashLoaner.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">FlashLoaner.sol</a>
+            </br>
+            <a href="https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/oracle-manipulation/IFlashLoanReceiver.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">IFlashLoanReceiver.sol</a>
+            </td>
+            <td>
+            <a href="https://ethernaut.openzeppelin.com/level/23" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Dex 2</a>
+            </td>
+            <td>
+            <a href="https://www.damnvulnerabledefi.xyz/challenges/puppet/" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Puppet</a>
+            </br>
+            <a href="https://www.damnvulnerabledefi.xyz/challenges/puppet-v2/" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Puppet V2</a>
+            </br>
+            <a href="https://www.damnvulnerabledefi.xyz/challenges/puppet-v3/" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Puppet V3</a>
+            </br>
+            <a href="https://www.damnvulnerabledefi.xyz/challenges/the-rewarder/" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">The Rewarder</a>
+            </br>
+            <a href="https://www.damnvulnerabledefi.xyz/challenges/selfie/" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Selfie</a>
+            </td>
+            <td>
+            <a href="https://rekt.news/cream-rekt-2/" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Cream Finance</a>
+            </td>
+        </tr>
+        <tr>
+            <td>Signature Replay</td>
+            <td>
+            <a href="https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/signature-replay/SignatureReplay.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Remix</a>
+            </td>
+            <td>
+            N/A
+            </td>
+            <td>
+            Coming soon...
+            </td>
+            <td>
+            Coming soon...
+            </td>
+        </tr>
+        <tr>
+            <td>Opcode Support/EVM Compatibility</td>
+            <td>
+            Coming Soon...
+            </td>
+            <td>
+            None
+            </td>
+            <td>
+            None
+            </td>
+            <td>
+            <a href="https://medium.com/coinmonks/gemstoneido-contract-stuck-with-921-eth-an-analysis-of-why-transfer-does-not-work-on-zksync-era-d5a01807227d" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">zkSync/GEM</a>
+            </td>
+        </tr>
+        <tr>
+            <td>Governance Attack</td>
+            <td>
+            Coming Soon...
+            </td>
+            <td>
+            None
+            </td>
+            <td>
+            None
+            </td>
+            <td>
+            <a href="https://rekt.news/tornado-gov-rekt/" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Tornado Cash</a>
+            </td>
+        </tr>
+        <tr>
+            <td>Stolen Private Keys</td>
+            <td>
+            Coming Soon...
+            </td>
+            <td>
+            None
+            </td>
+            <td>
+            None
+            </td>
+            <td>
+            <a href="https://rekt.news/vulcan-forged-rekt/" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Vulcan Forged</a>
+            <a href="https://rekt.news/mixin-rekt/" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Mixin</a>
+            </td>
+        </tr>
+        <tr>
+            <td>MEV</td>
+            <td>
+            <a href="https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/MEV/Frontran.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Remix</a>
+            </td>
+            <td>
+            None
+            </td>
+            <td>
+            None
+            </td>
+            <td>
+            <a href="https://blockworks.co/news/curve-suffers-exploit" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Vyper Attack</a>
+            </td>
+        </tr>
+        <tr>
+            <td>Invariant Break (Other exploits can cause this)</td>
+            <td>
+            Doesn't work great in remix
+            </td>
+            <td>
+            N/A
+            </td>
+            <td>
+            N/A
+            </td>
+            <td>
+            <a href="https://www.coinbase.com/blog/euler-compromise-investigation-part-1-the-exploit" target="_blank" style="display: inline-block; padding: 10px 15px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; outline: none; color: #fff; background-color: #4CAF50; border: none; border-radius: 15px; box-shadow: 0 5px #999;" target="_blank">Euler</a>
+            </td>
+        </tr>
+    </tbody>
+</table>
+
+
+
+### Denial of Service
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+​
+contract DoS {
+    address[] entrants;
+​
+    function enter() public {
+        // Check for duplicate entrants
+        for (uint256 i; i < entrants.length; i++) {
+            if (entrants[i] == msg.sender) {
+                revert("You've already entered!");
+            }
+        }
+        entrants.push(msg.sender);
+    }
+}
+```
+
+The problem arises when the size of our `entrants` array grows. Every time someone is added to the `entrants` array, another loop is added to the duplicate check and as a result `more gas is consumed`.
+
+We can see this in action by deploying our contract on Remix and comparing the gas consumed when we call this function subsequent times (remember, you'll need to switch your address being used).
+
+![exploit-denial-of-service1](SC-Security-note.assets/exploit-denial-of-service1.png)
+
+This kind of behavior raises questions about fairness and ultimately is going to lead to a `denial of service` in that it will become impractical for anyone to interact with this function, because gas costs will be too high.
+
+
+
+## DoS
+
+### Case Study: DoS
 
 
 
