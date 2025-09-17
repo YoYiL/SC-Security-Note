@@ -7,6 +7,8 @@
 > Click the table of contents icon (📋) in the upper right corner to view the complete directory
 >
 > Author: YoYiL
+>
+> Reference: https://github.com/Cyfrin/Updraft
 
 
 - [Dangerous Functions](#dangerous-functions)
@@ -1280,7 +1282,7 @@ We should see this fine in our IDE explorer. If we open it up...
 
 
 
-## Recon(Reconnaissance)
+## Recon(Reconnaissance) 1
 
 ### Reading Docs
 
@@ -1351,7 +1353,7 @@ With experience you'll be able to *smell* bugs. You'll see messy blocks of code 
 
 
 
-## Exploit
+## Exploit 1
 
 ### sc-exploits-minimized
 
@@ -1680,6 +1682,396 @@ This kind of behavior raises questions about fairness and ultimately is going to
 ## DoS
 
 ### Case Study: DoS
+
+We delve into two different kinds of **Denial of Service Attacks** or **DoS attacks** as they were uncovered from real security reviews. 
+
+#### Case Study 1: Bridges Exchange
+
+The first DoS vulnerability we'll touch on was found in the dividends distribution system of the Bridges exchange.
+
+##### Attack Mechanics
+
+The issue arises from an `unbounded for-loop` in the `distributeDividends` function, resulting in the risk of a DoS attack. An ill-intentioned party can cause the distribute dividends function to violate the block gas limit, effectively blocking all dividends by continually generating new addresses and minting minimal quantities of the Bridges pair token.
+
+Let's look at the code.
+
+```solidity
+function distributeDividends(uint amount) public payable lock {
+
+   require(amount == msg.value, "don't cheat");
+
+   uint length = users.length;
+
+   amount = amount.mul(magnitude);
+
+   for (uint i; i < length; i++){
+
+​      if(users[i] != address(0)){
+
+​         UserInfo storage user = userInfo[users[i]];
+
+​         user.rewards += (amount.mul(IERC20(address(this).balanceOf(users[i])).div(totalSupply.sub(MINIMUM_LIQUIDITY))));
+
+​      }
+
+   }
+
+}
+```
+
+We can see the `unbounded for-loop` above. This is looping through an array, `users[]`, the length of which has no limits.
+
+The practical effect of this is that, were the length of the `users[]` array long enough, the gas required to call this function would be prohibitively expensive. Potentially hitting block caps and being entirely uncallable.
+
+##### Confirming the Attack Vector
+
+In order to verify this is a vulnerability. We should investigate under what circumstances the `user[]` array can be added to.
+
+By searching for the variable we see the array is appended to in the mint function:
+
+```solidity
+function mint(address to) external lock returns (uint liquidity){
+
+   ...
+
+   if(IERC20(address(this).balanceOf(to) == 0)){
+
+​      users.push(to);
+
+   }
+
+}
+```
+
+In theory, an attacker could generate new wallet addresses (or transfer the minted tokens) to call this function repeatedly, bloating the array and DOSing the function.
+
+The resolution for the Bridges Exchange was to refactor things such that the `for-loop` wasn't needed.
+
+#### Case Study 2: Dos Attack in GMX V2
+
+The second instance of a DoS attack shows up in the GMX V2 system and is entirely different than the Bridges Exchange case mentioned above.
+
+##### Attack Mechanics
+
+The problem arises from a boolean indicator called `shouldUnwrapNativeToken`. This flag can be leveraged to set up positions that can't be reduced by liquidations or ADL (Auto-Deleveraging) orders. When the native token unwraps (with the flag set to true), a position can be formed by a contract that can't receive the native token. This leads to order execution reverting, causing a crucial function of the protocol to become unexecutable.
+
+##### Into the Code
+
+Let's investigate what this looks like in code.
+
+Within the GMX V2 `DecreaseOrderUtils` library we have the `processOrder` function. While processing an order with this library we eventually will call `transferNativeToken` within `TokenUtils.sol`.
+
+```solidity
+function transferNativeToken(DataStore dataStore, address receiver, uint256 amount) internal {
+
+   if (amount == 0) {return;}
+
+
+
+   uint256 gasLimit = dataStore.getUint(keys.NATIVE_TOKEN_TRANSFER_GAS_LIMIT);
+
+
+
+   (bool success, bytes memory data) = payable(receiver).call{value: amount, gas: gasLimit} ("");
+
+
+
+   if (success){return;}
+
+
+
+   string memory reason = string(abi.encode(data));
+
+   emit NativeTokenTransferReverted(reason);
+
+
+
+   revert NativeTokenTransferError(receiver, amount);
+
+}
+```
+
+
+
+Ultimately, this is where the problem lies. When a position in the protocol is liquidated, or de-leveraged, and the `shouldUnwrapNativeToken` flag is true, this function is called in the process.
+
+Were the `receiver` address a contract which was unable to receive value - the liquidation of the user would revert every time.
+
+This is a critical flaw!
+
+You may notice another potential vulnerability in the same function - the `gasLimit`. Were the receiver a contract address which expended unnecessary gas in it's receive function - this call would also revert!
+
+#### Wrap Up
+
+![image-20250916231549361](SC-Security-note.assets/image-20250916231549361.png)
+
+
+
+To summarize, here are a couple things to keep an eye out for which may lead to DoS attacks:
+
+1. **For-Loops**: Take extra caution with for-loops. Ask yourself these questions:
+   - Is the iterable entity bounded by size?
+   - Can a user append arbitrary items to the list?
+   - How much does it cost the user to do so?
+2. **External calls**: These can be anything from transferring Eth to calling a third-party contract. Evaluate ways these external calls could fail, leading to an incomplete transaction.
+
+![image-20250916231641853](SC-Security-note.assets/image-20250916231641853.png)
+
+DoS attacks put simply are - the denial of functions of a protocol. They can arise from multiple sources, but the end result is always a transaction failing to execute.
+
+Be vigilant for the above situations in your security reviews.
+
+
+
+### DoS PoC Puppy Raffle
+
+```solidity
+    /// @notice this is how players enter the raffle
+    /// @notice they have to pay the entrance fee * the number of players
+    /// @notice duplicate entrants are not allowed
+    /// @param newPlayers the list of players to enter the raffle
+    /// @audit Dos
+    function enterRaffle(address[] memory newPlayers) public payable {
+        require(msg.value == entranceFee * newPlayers.length, "PuppyRaffle: Must send enough to enter raffle");
+        for (uint256 i = 0; i < newPlayers.length; i++) {
+            players.push(newPlayers[i]);
+        }
+
+        // Check for duplicates
+        for (uint256 i = 0; i < players.length - 1; i++) {
+            for (uint256 j = i + 1; j < players.length; j++) {
+                require(players[i] != players[j], "PuppyRaffle: Duplicate player");
+            }
+        }
+        emit RaffleEnter(newPlayers);
+    }
+```
+
+#### Proof of Code
+
+If the protocol has an existing test suite, it's often easier to add our tests to it than write things from scratch.
+
+his is a great boilerplate for what we're trying to show.
+
+```solidity
+function testDenialOfService() public {
+    // Foundry lets us set a gas price
+    vm.txGasPrice(1);
+
+    // Creates 100 addresses
+    uint256 playersNum = 100;
+    address[] memory players = new address[](playersNum);
+    for(uint i = 0; i < players.length; i++){
+        players[i] = address(i);
+    }
+
+    // Gas calculations for first 100 players
+    uint256 gasStart = gasleft();
+    puppyRaffle.enterRaffle{value: entranceFee * players.length}(players);
+    uint256 gasEnd = gasleft();
+    uint256 gasUsedFirst = (gasStart - gasEnd) * tx.gasprice;
+    console.log("Gas cost of the first 100 players: ", gasUsedFirst);
+
+    // Creates another array of 100 players
+    address[] memory playersTwo = new address[](playersNum);
+    for (uint256 i = 0; i < playersTwo.length; i++) {
+        playersTwo[i] = address(i + playersNum);
+    }
+
+    // Gas calculations for second 100 players
+    uint256 gasStartTwo = gasleft();
+    puppyRaffle.enterRaffle{value: entranceFee * players.length}(playersTwo);
+    uint256 gasEndTwo = gasleft();
+    uint256 gasUsedSecond = (gasStartTwo - gasEndTwo) * tx.gasprice;
+    console.log("Gas cost of the second 100 players: ", gasUsedSecond);
+
+    assert(gasUsedFirst < gasUsedSecond);
+}
+
+```
+
+Running the command `forge test --mt testDenialOfService -vvv` should give us an output like this:
+
+![dos-poc2](SC-Security-note.assets/dos-poc2.png)
+
+That's all there is to it. We've clearly shown a potential `Denial of Service` through our `Proof of Code`. This test function is going to go right into our report
+
+### DoS: Reporting
+
+~~~markdown
+### [M-#] Looping through `players` to check for duplicates in `PuppyRaffle::enterRaffle` enables a Denial of Service (DoS) pattern by escalating gas for later entrants
+
+**Description**  
+The `enterRaffle` function uses a nested loop to detect duplicate participant addresses. As the `players` array grows, each new call scales roughly with O(n²) comparisons (cumulative effect), making later participation disproportionately expensive. This creates unfair cost dynamics and can be exploited to deter additional entrants.
+
+```solidity
+// @audit DoS pattern (quadratic duplicate scan)
+for (uint256 i = 0; i < players.length - 1; i++) {
+    for (uint256 j = i + 1; j < players.length; j++) {
+        require(players[i] != players[j], "PuppyRaffle: Duplicate Player");
+    }
+}
+```
+
+**Impact**  
+- Gas costs for late entrants become significantly higher, discouraging normal user participation.  
+- Creates a rush incentive for early entry.  
+- An attacker (or coordinated users) can bloat the array early to make further entries uneconomic, effectively griefing or monopolizing the raffle.
+
+**Proof of Concept (Gas Comparison)**  
+Two batches of 100 players produce approximate gas usage:  
+- First 100 players: ~6,252,048 gas  
+- Second 100 players: ~18,068,138 gas  
+The second batch costs over 3× the first due to quadratic growth.
+
+<details>
+<summary><strong>Proof of Code (click to expand)</strong></summary>
+
+```solidity
+function testDenialOfService() public {
+    // Foundry lets us set a gas price
+    vm.txGasPrice(1);
+
+    // First 100 addresses
+    uint256 playersNum = 100;
+    address[] memory players = new address[](playersNum);
+    for (uint256 i = 0; i < players.length; i++) {
+        players[i] = address(i);
+    }
+
+    // Gas for first 100
+    uint256 gasStart = gasleft();
+    puppyRaffle.enterRaffle{value: entranceFee * players.length}(players);
+    uint256 gasEnd = gasleft();
+    uint256 gasUsedFirst = (gasStart - gasEnd) * tx.gasprice;
+    console.log("Gas cost of the first 100 players: ", gasUsedFirst);
+
+    // Second 100 addresses
+    address[] memory playersTwo = new address[](playersNum);
+    for (uint256 i = 0; i < playersTwo.length; i++) {
+        playersTwo[i] = address(i + playersNum);
+    }
+
+    // Gas for second 100
+    uint256 gasStartTwo = gasleft();
+    puppyRaffle.enterRaffle{value: entranceFee * players.length}(playersTwo);
+    uint256 gasEndTwo = gasleft();
+    uint256 gasUsedSecond = (gasStartTwo - gasEndTwo) * tx.gasprice;
+    console.log("Gas cost of the second 100 players: ", gasUsedSecond);
+
+    assert(gasUsedSecond > gasUsedFirst);
+}
+```
+</details>
+
+---
+
+**Recommended Mitigation (diff)**  
+Replace the quadratic duplicate scan with a constant‑time membership check using a mapping keyed by address and scoped by a per‑raffle `raffleId`. Verify new entries before mutating state to avoid always reverting. Also, clear (or logically invalidate) participation when starting the next raffle by incrementing `raffleId`.
+
+```diff
++    mapping(address => uint256) public addressToRaffleId;
++    uint256 public raffleId = 0;
+    
+    
+    
+    function enterRaffle(address[] memory newPlayers) public payable {
+        require(msg.value == entranceFee * newPlayers.length, "PuppyRaffle: Must send enough to enter raffle");
+        for (uint256 i = 0; i < newPlayers.length; i++) {
+            players.push(newPlayers[i]);
++            addressToRaffleId[newPlayers[i]] = raffleId;
+        }
+​
+-        // Check for duplicates
++       // Check for duplicates only from the new players
++       for (uint256 i = 0; i < newPlayers.length; i++) {
++          require(addressToRaffleId[newPlayers[i]] != raffleId, "PuppyRaffle: Duplicate player");
++       }
+-        for (uint256 i = 0; i < players.length; i++) {
+-            for (uint256 j = i + 1; j < players.length; j++) {
+-                require(players[i] != players[j], "PuppyRaffle: Duplicate player");
+-            }
+-        }
+        emit RaffleEnter(newPlayers);
+    }
+.
+.
+.
+    function selectWinner() external {
++       raffleId = raffleId + 1;
+        require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
+```
+
+
+~~~
+
+## Exploit: Business Logic Edge Case
+
+By now we've identified fairly clearly how the `enterRaffle` function works. Our finding looks great. Let's next move onto the `refund` function, this one was mentioned explicitly in our documentation.
+
+```
+Users are allowed to get a refund of their ticket & value if they call the refund function
+```
+
+This is what the function looks like.
+
+```
+/// @param playerIndex the index of the player to refund. You can find it externally by calling `getActivePlayerIndex`
+
+/// @dev This function will allow there to be blank spots in the array
+
+function refund(uint256 playerIndex) public {
+
+​    address playerAddress = players[playerIndex];
+
+​    require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
+
+​    require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
+
+
+
+​    payable(msg.sender).sendValue(entranceFee);
+
+
+
+​    players[playerIndex] = address(0);
+
+​    emit RaffleRefunded(playerAddress);
+
+}
+```
+
+Remember to start with the documentation so that we understand what's supposed to happen. In order to call this function a player needs to provide their `playerIndex`, and this is acquired through the `getActivePlayerIndex` function.
+
+Let's jump over there quickly.
+
+```
+/// @notice a way to get the index in the array
+
+/// @param player the address of a player in the raffle
+
+/// @return the index of the player in the array, if they are not active, it returns 0
+
+function getActivePlayerIndex(address player) external view returns (uint256) {
+
+​    for (uint256 i = 0; i < players.length; i++) {
+
+​        if (players[i] == player) {
+
+​            return i;
+
+​        }
+
+​    }
+
+​    return 0;
+
+}
+```
+
+When looking at this function, we have to ask *"Why is this returning zero?"*
+
+Arrays begin at index 0, were the player at this index to call this function it would be very unclear whether or not they were in the raffle or not!
 
 
 
