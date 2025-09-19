@@ -11,6 +11,9 @@
 > Reference: https://github.com/Cyfrin/Updraft
 
 
+# Table of Contents
+
+- [Table of Contents](#table-of-contents)
 - [Dangerous Functions](#dangerous-functions)
   - [selfdestruct()](#selfdestruct)
     - [The Unique Characteristic of Selfdestruct](#the-unique-characteristic-of-selfdestruct)
@@ -148,10 +151,32 @@
       - [2. now（当前时间，已废弃）](#2-now当前时间已废弃)
       - [3. blockhash（区块哈希）](#3-blockhash区块哈希)
       - [防护措施对比](#防护措施对比)
+    - [Remix Examples](#remix-examples)
+      - [Wrap Up](#wrap-up-1)
+  - [Weak Randomness: Multiple Issues](#weak-randomness-multiple-issues)
+    - [block.timestamp](#blocktimestamp)
+    - [block.prevrandao](#blockprevrandao)
+    - [msg.sender](#msgsender)
+  - [Case Study: Weak Randomness](#case-study-weak-randomness)
+    - [Intro to Meebits and Andy Li](#intro-to-meebits-and-andy-li)
+    - [Case Study: Meebits - Insecure Randomness](#case-study-meebits---insecure-randomness)
+    - [How the Attack Happened](#how-the-attack-happened)
+  - [Weak Randomness: Mitigation](#weak-randomness-mitigation)
+  - [Exploit: Integer Overflow](#exploit-integer-overflow)
+  - [Integer Overflow: Mitigation](#integer-overflow-mitigation)
+  - [Exploit: Unsafe Casting](#exploit-unsafe-casting)
+    - [Unsafe Casting Breakdown](#unsafe-casting-breakdown)
+  - [Recon II](#recon-ii)
+    - [Risks in withdrawFees](#risks-in-withdrawfees)
+  - [Exploit: Mishandling Of ETH](#exploit-mishandling-of-eth)
+    - [**No Receive, No Fallback, No Problem.**](#no-receive-no-fallback-no-problem)
+    - [Mishandling of ETH: Minimized](#mishandling-of-eth-minimized)
 - [TSwap](#tswap)
 - [Thunder Loan](#thunder-loan)
 - [Boss Bridge](#boss-bridge)
 - [MEV \& Governance](#mev--governance)
+
+
 
 
 
@@ -164,11 +189,13 @@
 
 Why `selfdestruct` stands out lies in its exceptional behavior once a contract gets destroyed. Any Ethereum (or ETH) residing within the deleted contract gets automatically ‘pushed’ or ‘forced’ into any address that you specify.
 
-Under normal circumstances a contract that doesn't contain a receive or fallback function (or some other payable function capable of receiving funds) cannot have ETH sent to it.
+Under normal circumstances a contract that **doesn't contain a receive or fallback function** (or some other payable function capable of receiving funds) cannot have ETH sent to it.
 
 Only through the use of `selfdestruct` can you be permitted to push any Ethereum into such a contract.
 
 So if ever you’re hunting for an exploit, or you have identified an attack where you need to force ETH into a contract, `selfdestruct` will be your instrument of choice.
+
+**`SELFDESTRUCT` 是唯一可以绕过 `receive` 和 `fallback` 函数限制的方式**，它可以强制向任何合约发送以太币，无论目标合约是否有接收函数。此外，**SELFDESTRUCT 只是单纯地转移余额，不会触发目标合约的任何函数！**
 
 ### 重大变化：EIP-6780 的影响
 
@@ -2402,9 +2429,15 @@ Running slither as above we can see it's output contains the following:
 
 ![weak-randomness1](SC-Security-note.assets/weak-randomness1.png)
 
+![image-20250918213933609](SC-Security-note.assets/image-20250918213933609.png)
+
 So what is this detector telling us - that `PuppyRaffle.sol` is using weak PRNG or Pseudo Random Number Generation. We can navigate to the [**link provided**](https://github.com/crytic/slither/wiki/Detector-Documentation#weak-PRNG) for more information and a simplified example of this vulnerability.
 
 ![weak-randomness2](SC-Security-note.assets/weak-randomness2.png)
+
+Beyond what's outlined here as a concern - that miners can influence global variables favorable - there's a lot more *weirdness* that goes into random numbers on-chain.
+
+If you've seen any of my other content, you know that Chainlink VRF is a solution for this problem, and I encourage you to check out the [**documentation**](https://docs.chain.link/vrf) for some additional learnings.
 
 ### 什么是 blockhash？
 
@@ -2504,9 +2537,383 @@ contract BlockhashVulnerable {
 
 **总结：**矿工通过控制区块内容（时间戳、交易顺序、包含的交易等）来影响这些"随机"值，从而操纵游戏结果。这就是为什么需要使用真正的随机数服务。
 
-Beyond what's outlined here as a concern - that miners can influence global variables favorable - there's a lot more *weirdness* that goes into random numbers on-chain.
+### Remix Examples
 
-If you've seen any of my other content, you know that Chainlink VRF is a solution for this problem, and I encourage you to check out the [**documentation**](https://docs.chain.link/vrf) for some additional learnings.
+Return to our [**sc-exploits-minimized**](https://github.com/Cyfrin/sc-exploits-minimized) repo and we've included a link to a [**Remix example**](https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/weak-randomness/WeakRandomness.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js) of this vulnerability.
+
+> This contract is available for local testing as well [**here**](https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/weak-randomness/WeakRandomness.sol).
+
+Looking at the `Remix` example, we can see it's doing something very similar to what `PuppyRaffle` is doing
+
+```
+uint256 randomNumber = uint256(keccak256(abi.encodePacked(msg.sender, block.prevrandao, block.timestamp)));
+```
+
+In this declaration we're taking 3 variables:
+
+- msg.sender
+
+- block.prevrandao
+
+- block.timestamp
+
+- **RANDAO** = **RAN**dom **D**ecentralized **A**utonomous **O**rganization
+
+  它是一个去中心化的随机数生成机制，在以太坊 2.0 的权益证明（PoS）共识中使用。
+
+| 随机源             | 历史可预测性 | 未来可预测性 | 操纵难度 |
+| ------------------ | ------------ | ------------ | -------- |
+| `block.timestamp`  | 100%         | 高           | 容易     |
+| `blockhash`        | 100%         | 高           | 中等     |
+| `block.prevrandao` | 100%         | **中等到高** | 中等     |
+| Chainlink VRF      | 0%           | 低           | 极难     |
+
+We're hashing these variables and casting the result as a uint256. The problem exists in that the 3 variables we're deriving our number from are able to be influenced or anticipated such that we can predict what the random number will be.
+
+The test set up in [**sc-exploits-minimized**](https://github.com/Cyfrin/sc-exploits-minimized) may look a little silly, but what's trying to be conveyed is that generating the same random number in a single block is another example of how this vulnerability can be exploited.
+
+```solidity
+// For this test, a user could just deploy a contract that guesses the random number...
+
+// by calling the random number in the same block!!
+
+function test_guessRandomNumber() public {
+
+​    uint256 randomNumber = weakRandomness.getRandomNumber();
+
+
+
+​    assertEq(randomNumber, weakRandomness.getRandomNumber());
+
+}
+```
+
+#### Wrap Up
+
+In short - the blockchain is deterministic. Using on-chain variables and pseudo random number generation leaves a protocol open to exploits whereby an attacker can predict or manipulate the 'random' value.
+
+There multiple ways that weak randomness can be exploited.
+
+## Weak Randomness: Multiple Issues
+
+Let's look at a few ways that randomness, as we've seen in `PuppyRaffle` and our [**sc-exploits-minimized**](https://github.com/Cyfrin/sc-exploits-minimized) examples, can be manipulated.
+
+![randomness-issues1](SC-Security-note.assets/randomness-issues1.png)
+
+### block.timestamp
+
+Relying on block.timestamp is risky for a few reasons as node validators/miners have privileges that may give them unfair advantages.
+
+The validator selected for a transaction has the power to:
+
+- Hold or delay the transaction until a more favorable time
+- Reject the transaction because the timestamp isn't favorable
+
+Timestamp manipulation has become less of an issue on Ethereum, since the merge, but it isn't perfect. Other chains, such as Arbitrum can be vulnerable to several seconds of slippage putting randomness based on `block.timestamp` at risk.
+
+### block.prevrandao
+
+`block.prevrandao` was introduced to replace `block.difficulty` when the merge happened. This is a system to choose random validators.
+
+The security issues using this value for randomness are well enough known that many of them are outlined in the [**EIP-4399**](https://eips.ethereum.org/EIPS/eip-4399) documentation already.
+
+The security considerations outlined here include:
+
+**Biasability:** The beacon chain RANDAO implementation gives every block proposer 1 bit of influence power per slot. Proposer may deliberately refuse to propose a block on the opportunity cost of proposer and transaction fees to prevent beacon chain randomness (a RANDAO mix) from being updated in a particular slot.
+
+**Predictability:** Obviously, historical randomness provided by any decentralized oracle is 100% predictable. On the contrary, the randomness that is revealed in the future is predictable up to a limited extent.
+
+### msg.sender
+
+Any field controlled by a caller can be manipulated. If randomness is generated from this field, it gives the caller control over the outcome.
+
+By using msg.sender we allow the caller the ability to mine for addresses until a favorable one is found, breaking the randomness of the system
+
+## Case Study: Weak Randomness
+
+### Intro to Meebits and Andy Li
+
+Let's look into a case study that involves the exploit of an NFT project, Meebits, which occurred in 2021. This analysis will shed light on a real-world example of how weak randomness was exploited, resulting in a substantial loss of nearly a million dollars for the protocol.
+
+We extend our appreciation to [**Andy Li**](https://twitter.com/andyfeili) from [**Sigma Prime**](https://sigmaprime.io/) who walks us through the details of this attack.
+
+*Information in this post is graciously provided by Andy*
+
+Remember, periodically conducting post mortems like this greatly contributes towards honing your skills as a security researcher. Familiarity begets mitigation.
+
+### Case Study: Meebits - Insecure Randomness
+
+Meebits, created by Larva Labs (team behind CryptoPunks), was exploited in May 2021 due to insecure randomness in its smart contracts. By rerolling their randomness, an attacker was able to obtain a rare NFT which they sold for $700k.
+
+The concept behind Meebits was simple. If you owned a CryptoPunk, you could mint a free Meebit NFT. The attributes of this newly minted NFT were supposed to be random, with some traits being more valuable than others. However, owing to exploitable randomness, the attacker could reroll their mint until they obtained an NFT with desirable traits.
+
+### How the Attack Happened
+
+There were 4 distinct things that occurred.
+
+**Metadata Disclosure:** The Meebit contract contained an IPFS hash which pointed to metadata for the collection. Within the Metadata there existed a string of text that clearly disclosed which traits would be the most rare
+
+```
+"...While just five of the 20,000 Meebits are of the dissected form, which is the rarest. The kinds include dissected, visitor, skeleton, robot, elephant, pig and human, listed in decreasing order of rarity."
+```
+
+In addition to this, the `tokenURI` function allowed public access to the traits of your minted Meebit, by passing the function your tokenId.
+
+**Insecure Randomness:** Meebits calculated a random index based on this line of code:
+
+```
+uint index = uint(keccak256(abi.encodePacked(nonce, msg.sender, block.difficulty, block.timestamp))) % totalSize;
+```
+
+This method to generate an index is used within Meebit's `randomIndex` function when minting an NFT.
+
+```
+function _mint(address _to, uint createdVia) internal returns (uint) {
+
+​        require(_to != address(0), "Cannot mint to 0x0.");
+
+​        require(numTokens < TOKEN_LIMIT, "Token limit reached.");
+
+​        uint id = randomIndex();
+
+
+
+​        numTokens = numTokens + 1;
+
+​        _addNFToken(_to, id);
+
+
+
+​        emit Mint(id, _to, createdVia);
+
+​        emit Transfer(address(0), _to, id);
+
+​        return id;
+
+​    }
+```
+
+**Attacker Rerolls Mint Repeatedly:** The attacker in this case deployed a contract which did two things.
+
+1. Calls `mint` to mint an NFT
+2. Checks the 'random' Id generated and reverts the `mint` call if it isn't desirable.
+
+The attack contract wasn't verified, but if we decompile its bytecode we can see the attack function.
+
+```
+function 0x1f2a8a19(uint256 varg0) public nonPayable {
+
+​    require(msg.data.length -4 >= 32);
+
+​    require(bool(stor_2_0_19.code.size));
+
+​    v0, /*uint256*/ v1 = stor_2_0_19.mintWithPunkOrGlyph(varg0).gas(msg.gas);
+
+​    require(bool(v0), 0, RETURNDATASIZE());
+
+​    require(RETURNDATASIZE() >= 32);
+
+​    assert(bool(uint8(map_1[v1]))==bool(1));
+
+​    v2 = address(block.coinbase).call().value(0xde0b6b3a7640000);
+
+​    require(bool(v2), 0, RETURNDATASIZE());
+
+}
+```
+
+The above my be a little complex, but these are the important lines to note:
+
+```
+v0, /*uint256*/ (v1 = stor_2_0_19.mintWithPunkOrGlyph(varg0).gas(msg.gas));
+```
+
+and
+
+```
+assert(bool(uint8(map_1[v1])) == bool(1));
+```
+
+The first line is where the mint function is being called by the attacking contract.
+
+The second line is where an assertion is made that the minted NFT has the desired rare traits. If this assertion fails, the whole transaction is reverted.
+
+**Attacker Receives Rare NFT:**
+
+The attacking contract repeatedly called the mint function and kept reverting for over six hours, spending about $20,000 per hour in gas until it finally minted the rare NFT it was targeting: Meebit #16647. That NFT had the “Visitor” trait and later sold for $700,000.
+
+![meebit1](SC-Security-note.assets/meebit1.png)
+
+## Weak Randomness: Mitigation
+
+In short, relying on on-chain data to generate random numbers is problematic due to the deterministic nature of the blockchain. The easiest way to mitigate this is to generate random numbers off-chain.
+
+Some off-chain solutions include:
+
+**Chainlink VRF:** "A provably fair and verifiable random number generator (RNG) that enables smart contracts to access random values without compromising security or usability. For each request, Chainlink VRF generates one or more random values and cryptographic proof of how those values were determined. The proof is published and verified on-chain before any consuming applications can use it. This process ensures that results cannot be tampered with or manipulated by any single entity including oracle operators, miners, users, or smart contract developers." - I encourage you to [**check out the Docs**](https://docs.chain.link/vrf).
+
+**Commit Reveal Scheme:** "The scheme involves two steps: commit and reveal.
+
+During the commit phase, users submit a commitment that contains the hash of their answer along with a random seed value. The smart contract stores this commitment on the blockchain. Later, during the reveal phase, the user reveals their answer and the seed value. The smart contract then checks that the revealed answer and the hash match, and that the seed value is the same as the one submitted earlier. If everything checks out, the contract accepts the answer as valid and rewards the user accordingly." - Read more in this [**Medium Article**](https://medium.com/coinmonks/commit-reveal-scheme-in-solidity-c06eba4091bb)!
+
+## Exploit: Integer Overflow
+
+We've only just started with the `selectWinner` function and we've already found another issue. Let's keep going and see if we can find more.
+
+```solidity
+function selectWinner() external {
+        require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
+        require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
+        uint256 winnerIndex =
+            uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
+        address winner = players[winnerIndex];
+        // @Audit: Why the calculation for totalAmountCollected, why not address(this).balance?
+        uint256 totalAmountCollected = players.length * entranceFee;
+        // @Audit:80% prizePool, 20% fee. Is this correct? Arithmetic may lead to precision loss
+        uint256 prizePool = (totalAmountCollected * 80) / 100;
+        uint256 fee = (totalAmountCollected * 20) / 100;
+        // @Audit: Total fees the owner should be able to collect. Why the casting? Overflow.
+        totalFees = totalFees + uint64(fee);
+​
+        ...
+```
+
+Assessing the function snippet above I notice a few things that may be worth noting in our `notes.md` and/or by leaving in-line notes like shown.
+
+```
+totalFees = totalFees + uint64(fee);
+```
+
+This line in particular sets my alarm bells off. My experience tells me that this is at risk of `integer overflow`. This is a bit of a classic issue, as newer versions of Solidity (>=0.8.0) are protected from it.
+
+> **Note:** 
+>
+> In Solidity versions 0.8.0+ `unchecked` is required to expose this vulnerability. Uints and ints are `checked` by default. If a max is surpassed in these versions, the transaction will revert.
+
+## Integer Overflow: Mitigation
+
+1. **Upgrade Solidity Version**: Implement automatic overflow protection by using a modern compiler version.
+
+```diff 
+- pragma solidity ^0.7.6;
++ pragma solidity ^0.8.18;
+```
+
+Alternatively, for legacy version compatibility, integrate OpenZeppelin's `SafeMath` library for overflow-safe arithmetic operations.
+
+2. **Expand Data Type**: Increase the storage capacity to prevent realistic overflow scenarios.
+
+```diff
+- uint64 public totalFees = 0;
++ uint256 public totalFees = 0;
+```
+
+3. **Remove Problematic Balance Check**: Eliminate the strict balance verification that prevents fee withdrawal.
+
+```diff
+- require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
+```
+
+## Exploit: Unsafe Casting
+
+### Unsafe Casting Breakdown
+
+There's another issue with the line `totalFees = totalFees + uint64(fee)` that's similar to integer overflow, but a little different.
+
+Using `chisel` again, we can see that a max `uint64` is 18446744073709551615.
+
+Welcome to Chisel! Type `!help` to show available commands.
+
+```
+➜ type(uint64).max
+
+Type: uint
+
+├ Hex: 0x000000000000000000000000000000000000000000000000ffffffffffffffff
+
+└ Decimal: 18446744073709551615
+
+➜
+```
+
+We've also learnt that adding any to this number is going to wrap around to 0 again, but what happens if we try to cast a larger number into this smaller container?
+
+![unsafe-casting1](SC-Security-note.assets/unsafe-casting1.png)
+
+
+
+We can see above that when `20e18` is cast as a `uint64` the returned value is actually the difference between `type(uint64).max` and `20e18`.
+
+## Recon II
+
+When a call is made externally, we should always ask ourselves what could happen in different scenarios.
+
+- *What if the recipient is a smart contract?*
+- *What if the contract doesn't have a receive/fallback function or forces a revert?*
+- *What if the recipient calls another function through receive/fallback?*
+
+The more experience you gain performing security reviews, the better your intuition will be about which questions to ask and what to watch out for.
+
+However, if the winner had a broken `receive` function, `selectWinner` here would fail, it could actually be quite difficult to select a winner in that situation! We'll discuss impact and reporting of that a little later.
+
+```solidity
+// @Audit: Winner wouldn't be unable to receive rewards if fallback function was broken!
+(bool success,) = winner.call{value: prizePool}("");
+require(success, "PuppyRaffle: Failed to send prize pool to winner");
+_safeMint(winner, tokenId);
+```
+
+Alright, we've completed a fairly thorough walkthrough of `selectWinner`, let's move onto the next function `withdrawFees`.
+
+> As always there may be more bugs in these repos than we go over, keep a look out!
+
+### Risks in withdrawFees
+
+```solidity
+function withdrawFees() external {
+	// @Audit: If there are players, fees can't be withdrawn, does this make withdrawal difficult?
+    require(address(this).balance == uint256(totalFees), "PuppyRaffle: There are currently players active!");
+    uint256 feesToWithdraw = totalFees;
+    totalFees = 0;
+    // @Audit: What if the feeAddress is a smart contract with a fallback/receive which reverts?
+    (bool success,) = feeAddress.call{value: feesToWithdraw}("");
+    require(success, "PuppyRaffle: Failed to withdraw fees");
+}
+```
+
+We've covered two more functions in `Puppy Raffle` and I think we're on the trail of a couple more bugs.
+
+## Exploit: Mishandling Of ETH
+
+### **No Receive, No Fallback, No Problem.**
+
+Puppy Raffle's hope is that without a receive or fallback function, there should never be a way for this accounting to imbalance. Well, let's test it out.
+
+```solidity
+function testCantSendMoneyToRaffle() public {
+
+​    address sendAddy = makeAddr("sender");
+
+​    vm.deal(sendAddy, 1 ether);
+
+​    vm.expectRevert();
+
+​    vm.prank(sendAddy);
+
+​    (bool success, ) = payable(address(puppyRaffle)).call{value: 1 ether}("");
+
+​    require(success);
+
+}
+```
+
+但是可以被selfdestruct攻击
+
+### Mishandling of ETH: Minimized
+
+
+
+
 
 
 
