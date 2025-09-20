@@ -2417,7 +2417,7 @@ _safeMint(winner, tokenId);
 
 It's important that this selection is fair and truly random or this could be exploited by malicious actors fairly easily. My alarm bells are going off and I'm seeing a lot of red flags.
 
-## Exploit: Weak Randomness
+## Exploit: Weak Randomness（ PRNG or Pseudo Random Number Generation.）
 
 et's actually take a moment to go back to `Slither` because, if you can believe it, `Slither` will actually catch this for us.
 
@@ -2911,13 +2911,471 @@ function testCantSendMoneyToRaffle() public {
 
 ### Mishandling of ETH: Minimized
 
+To see this vulnerability in action we're going to again reference our [**sc-exploits-minimized**](https://github.com/Cyfrin/sc-exploits-minimized) repo!
 
+There are two situational examples available for `Mishandling of ETH` for this lesson we want [**Remix (Vulnerable to selfdestruct)**](https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/mishandling-of-eth/SelfDestructMe.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js).
+
+> Remember: The codebase is available on the [**sc-exploits-minimized**](https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/mishandling-of-eth/SelfDestructMe.sol) repo as well, if you want to test things locally.
+
+```solidity
+contract SelfDestructMe {
+    uint256 public totalDeposits;
+    mapping(address => uint256) public deposits;
+​
+    function deposit() external payable {
+        deposits[msg.sender] += msg.value;
+        totalDeposits += msg.value;
+    }
+​
+    function withdraw() external {
+        /*
+            Apparently the only way to deposit ETH in the contract is via the `deposit` function.
+            If that were the case, this strict equality would always hold.
+            But anyone can deposit ETH via selfdestruct, or by setting this contract as the target
+            of a beacon chain withdrawal.
+            (see last paragraph of this section
+            https://eth2book.info/capella/part2/deposits-withdrawals/withdrawal-processing/#performing-withdrawals),
+            regardless of the contract not having a `receive` function.
+​
+            If anybody deposits ETH that way, then the equality breaks and the contract is DoS'd.
+            To fix it, the code could be changed to >= instead of ==. Which means that the available
+            ETH balance should be _at least_ `totalDeposits`, which makes more sense.
+        */
+        assert(address(this).balance == totalDeposits); // bad
+​
+        uint256 amount = deposits[msg.sender];
+        totalDeposits -= amount;
+        deposits[msg.sender] = 0;
+​
+        payable(msg.sender).transfer(amount);
+    }
+}
+```
+
+A user is able to deposit funds, which updates their balance as well as the `totalDeposits` variable. A user can also call `withdraw`, this function checks that the contract's balance is still equal to the `totalDeposits` and if so will updates balances and transfer funds.
+
+The issue comes from this line:
+
+```
+assert(address(this).balance == totalDeposits);
+```
+
+The core of this vulnerability is the assumption that, without a `receive` or `fallback` function, the only way to send value to this contract is through the deposit function.
+
+This is ***false\***.
+
+Go ahead and deploy the `AttackSelfDestructMe.sol` contract. The constructor requires an attack target, so be sure to copy the address for `SelfDestructMe.sol` and pass it to your deploy. Give the contract a balance during deployment as well.
+
+Now, when the attack function is called, `selfdestruct` will be triggered, and we expect to see our 5 Ether forced onto `SelfDestructMe.sol`.
+
+Lastly, try calling the `withdraw` function on `SelfDestructMe.sol`. It reverts! The contract's accounting has been broken and it's balance is now stuck!
+
+![mishandling-eth-minimized5](SC-Security-note.assets/mishandling-eth-minimized5.png)
+
+We've illustrated how relying on a contract's balance as a means of internal counting can be risky. There's really no way to be certain that arbitrary value isn't sent to a contract currently.
+
+### Case Study: Sushi Swap
+
+One of the best things you can do to grow your skills as a security researcher is to read case studies and familiarize yourself with hacks. We've included, in the [**course repo**](https://github.com/Cyfrin/security-and-auditing-full-course-s23), a link to [**an article**](https://samczsun.com/two-rights-might-make-a-wrong/) illustrating the case study we'll be going over briefly.
+
+Now, the situation with Sushi Swap is different from what we've seen in other example, because again - `Mishandling of Eth` is a very broad category. Ultimately the issue was with this function:
+
+function batch(bytes[] calldata calls, bool revertOnFail) external payable returns (bool[] memory successes, bytes[] memory results) {
+
+```solidity
+function batch(bytes[] calldata calls, bool revertOnFail) external payable returns (bool[] memory successes, bytes[] memory results) {
+    successes = new bool[](calls.length);
+    results = new bytes[](calls.length);
+    for (uint256 i = 0; i < calls.length; i++) {
+        (bool success, bytes memory result) = address(this).delegatecall(calls[i]);
+        require(success || !revertOnFail, _getRevertMsg(result));
+        successes[i] = success;
+        results[i] = result;
+    }
+}
+```
+
+In the simplest terms, this function allows a user to compile multiple calls into a single transaction - sounds useful.
+
+The oversight was in the use of `delegatecall`. When implementing delegatecall, msg.sender *and* msg.value are persistent. This meant that a single value sent for one call in this function could be used for multiple calls!
+
+> **For example:** If I were to call a function which cost 1 ETH, to call it 100 times, it should cost 100 ETH. In the case of the `batch` function, a user would be able to call the function 100 times, for only 1 ETH!
+
+## Recon III
+
+We're doing great so far and have uncovered lots - we definitely shouldn't stop now.
+
+### tokenURI
+
+Skimming through the `tokenURI` function, nothing initially sticks out as unusual. A few things we would want to check would be:
+
+- Assuring tokens have their rarity properly assigned.
+- Verifying mapping for `rarityToUri` and `rarityToName` and where they are set.
+- Double checking that the image URIs work for each rarity.
+
+The function then ends in a whole bunch of encoding stuff. It's pretty heavy, so we're not going to go through it too deeply. There may be some redundancy here - I challenge you to sus it out - but for the most part this is good.
+
+Definitely be thinking about *how can I break this view function?*
+
+### Wrap Up
+
+At this point we've completed our first thorough review of the code base. We should definitely go back and reassess events, as well as dedicate some time considering state variables - but for the most part, we've completed an initial review!
+
+This would be a great stage to go back through our notes and begin answering some of the questions we've been leaving ourselves.
+
+We likely have a tonne of questions at this point and it's good practice to now answer them. Going through our previous questions might even generate new ones - **but we keep at the process until we have a solid understanding of how everything should and does work.**
+
+Usually **one pass of a code base isn't going to be enough.** If there are unanswered questions, it's a good sign that you need to go deeper.
+
+## Answering Our Questions
+
+```javascript
+// Q1: What resets the players array?
+​
+// Q2: What if enterRaffle is called with an empty array?
+​
+// Q3: In the case of getActivePlayerIndex - what if the player is at Index 0?
+​
+// Q4: Does the selectWinner function follow CEI?
+​
+// Q5: Are raffleDuration and raffleStartTime being set correctly?
+​
+// Q6: Why not use address(this).balance for the totalAmountCollected in the selectWinner function?
+​
+// Q7: Is the 80% calculation for winners rewards correct?
+​
+// Q8: Where do we increment the totalSupply/tokenId?
+​
+// Q9: Can a user simply force the selectWinner function to revert if they don't like the results?
+​
+// Q10: What happens if the winner is a contract with broken or missing receive/fallback functions?
+​
+// Q11: What happens if the feeAddress is a contract with broken or missing receive/fallback functions?
+```
+
+```javascript
+// A1: The players array is reset in the selectWinner function.
+​
+...
+delete players;
+raffleStartTime = block.timestamp;
+previousWinner = winner;
+(bool success,) = winner.call{value: prizePool}("");
+...
+​
+// A2: If an empty array is submitted, an event is still emitted by the function. This will likely go in our report.
+​
+...
+function enterRaffle(address[] memory newPlayers) public payable {
+    require(msg.value == entranceFee * newPlayers.length, "PuppyRaffle: Must send enough to enter raffle");
+    ...
+    emit RaffleEnter(newPlayers);
+}
+...
+​
+// A3: A player at index zero, may believe they are not active in a raffle, as this function returns zero if a player is not found. This will also go in our report for sure.
+​
+...
+function getActivePlayerIndex(address player) external view returns (uint256) {
+    for (uint256 i = 0; i < players.length; i++) {
+        if (players[i] == player) {
+            return i;
+        }
+    }
+    return 0;
+}
+...
+​
+// A4: No, the selectWinner function doesn't follow CEI and we would recommend to the protocol that it does. However, I happen to know this isn't an issue in this function, so we might flag this as informational.
+​
+// A5: They are being set in the constructor and seem to be configured properly.
+​
+...
+constructor(uint256 _entranceFee, address _feeAddress, uint256 _raffleDuration) ERC721("Puppy Raffle", "PR") {
+        entranceFee = _entranceFee;
+        feeAddress = _feeAddress;
+        raffleDuration = _raffleDuration;
+        raffleStartTime = block.timestamp;
+...
+​
+// A6: This may be a design choice, but without clear rationale or a protocol to ask, we may flag this as informational for now.
+​
+// A7: Yes, as per the documentation, 80% should be sent to the winner with 20% being retained in fees.
+​
+// A8: This is handled by the OpenZeppelin ERC721.sol contract. Ultimately being set by this declaration when a winner is selected:
+​
+...
+uint256 tokenId = totalSupply();
+...
+​
+// A9: Yes! This will probably be an issue we'll want to add to our report.
+​
+// A10: The winner wouldn't be able to receive their reward! This is definitely something we should report as a vulnerability.
+​
+// A11: Sending funds to the feeAddress with the withdrawFees function will probably fail, but this is very low impact as the owner can simply change the feeAddress.
+```
+
+## Info and Gas Findings
+
+![image-20250919203222688](SC-Security-note.assets/image-20250919203222688.png)
+
+We briefly ran Slither earlier in this section, but didn't look too closely at what its output was. We should definitely return to this.
+
+A convention I like to use for storage variables is the `s_variableName` convention! So this may be an informational finding we would want to submit.
+
+Even further up the contract there's a bigger concern however.
+
+```
+pragma solidity ^0.7.6
+```
+
+This statement is what's known as a `floating pragma`. It essentially denotes that the contract is compatible with solidity versions up to and including `0.7.6`. This brings a number of concerns including vulnerabilities across multiple versions, so best practice is to use a single version of solidity.
+
+This would be a great informational finding to include in our report.
+
+### Further Recommendations
+
+Progressing down the code base, the next thing I notice are these statements:
+
+```
+uint256 prizePool = (totalAmountCollected * 80) / 100;
+
+uint256 fee = (totalAmountCollected * 20) / 100;
+```
+
+When raw numbers are used in a code body like this, we refer to them as `Magic Numbers`. They provide no context of what they're doing. Best practice would be to assign these to named constants.
+
+```
+uint256 public constant PRIZE_POOL_PERCENTAGE = 80;
+uint256 public constant FEE_PERCENTAGE = 20;
+uint256 public constant POOL_PRECISION = 100;
+​
+uint256 prizePool = (totalAmountCollected * PRIZE_POOL_PERCENTAGE) / POOL_PRECISION;
+uint256 fee = (totalAmountCollected * FEE_PERCENTAGE) / POOL_PRECISION;
+```
+
+The last thing I'll point out is best verified through the project's `foundry.toml`. Here we can see the versions of the libraries being imported for the protocol.
+
+A good practice will be to investigate the specific versions being used for reported issues and security advisories.
+
+We can navigate to the OpenZeppelin security section [**here**](https://github.com/OpenZeppelin/openzeppelin-contracts/security).
+
+This section of the OpenZeppelin repo is kept updated with known security vulnerabilities within various versions of the OpenZeppelin library.
+
+By clicking on one of the advisories, we get a detailed breakdown including the affected versions.
+
+![info-and-gas2](SC-Security-note.assets/info-and-gas2.png)
+
+### Gas
+
+In addition to informational findings in an audit, it can be optional to include gas recommendations for the protocol as well, though static analysis tools are getting really good at this and they're certainly becoming less common.
+
+One example of such a suggestion in Puppy Raffle would be regarding `raffleDuration`. Currently this is a storage variable, but this never changes. Puppy Raffle could absolutely change this to be a `constant` or `immutable` variable to save substantial gas.
+
+## Pitstop
+
+At this point, we're nearly done. We've two outstanding things to cover.
+
+The first will be running through the `Slither` and `Aderyn` reports for Puppy Raffle and finally we'll check the code quality/tests for this repo.
+
+Once we've completed those steps, I'm going to walk you through `Competitive Audits` on CodeHawks and how to submit a finding!
+
+Then, the very last thing we'll do in this section is write our Puppy Raffle report, with PoCs. We won't always be going through the entire reporting process together. It can be time intensive, but it's important for you to practice these skills on your own. This is your opportunity to test yourself, gain insights, and prepare for future competitive audits.
+
+## Slither Walkthrough
+
+![image-20250919221804327](SC-Security-note.assets/image-20250919221804327.png)
+
+Alright, let's take a closer look at some of the issues Slither was able to find in our code base earlier. These will include, but aren't limited to, each of these.
+
+- Using incorrect Solidity versions
+- Missing/wrong events
+- Event reentrancy
+- Zero address checks
+- Supply chain attacks
+- Cache storage variables for loops
+- Unchanged variables marked as immutable or constan
+
+tart by running `slither .` just as before and let's dive into the output starting at the most severe
+
+![slither-walkthrough1](SC-Security-note.assets/slither-walkthrough1.png)
+
+Conveniently, by using the syntax `// slither-disable-next-line [DETECTOR_NAME]`, we can tell Slither to ignore this warning:
+
+```solidity
+// slither-disable-next-line arbitrary-send-eth
+
+(bool success,) = feeAddress.call{value: feesToWithdraw}("")
+```
+
+ **Uses a Weak PRNG**
+
+- Dangerous Calls:
+  - `winnerIndex = uint256(keccak256(bytes)(abi.encodePacked(msg.sender,block.timestamp,block.difficulty))) % players.length (src/PuppyRaffle.sol#127-128)`
+
+This is the same vulnerability we detected! We can have slither ignore this line with:
+
+```solidity
+// slither-disable-next-line weak-prng
+
+uint256 winnerIndex =
+
+uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) 
+```
+
+Now, at this point, you're probably annoyed by all the libraries `Slither` has been catching things in. What if I told you there's a better way to exclude them all at once?!
+
+==By running `Slither . --exclude-dependencies` we can actually run our tool and have it ignore anything detected in our imports!==
+
+## Aderyn Walkthrough
+
+Next, let's see what `Aderyn` can do for the Puppy Raffle repo. We'll assess each of the findings in turn. Some of which will include:
+
+- Centralization Risks
+- Dynamic Types & abi.encodePacked
+- Non-Indexed Events
+
+...
+
+## Test Coverage
+
+Alright! Let's see where we're at in our roadmap
+
+```
+Slither ✅
+Aderyn ✅
+Code Quality/Tests
+---
+Reporting
+- Competitive Audits
+    - Submit a finding
+- Puppy Raffle Report incl. PoC
+```
+
+st coverage is up next, this should be easy.
+
+> **Remember:** you can check test coverage with the command `forge coverage`.
+
+![test-coverage1](SC-Security-note.assets/test-coverage1.png)
+
+This is ... pretty bad. In the context of a competitive audit, this may be less important, but in a private audit we should absolutely be calling this out as an informational. Assuring a repo has an adequate test coverage helps a protocol avoid overlooking areas of their code.
+
+## Phase 4: Reporting Primer
+
+As was mentioned before - you can always look at one more line of code, but at some point, you got to *write the report*.
+
+Now, we're satisfied with our review, we're happy with the job we did. Lets write things up. We're going to go through the report together again as this is a crucial skill for your future security researcher career.
+
+In audits and especially in bug bounties, it is your obligation to convince the protocol of the importance of your finding and the need for it to be fixed. Writing detailed and thorough audit reports is the avenue through which we do this.
+
+BUT. Before we walkthrough another report, I want to introduce you to competitive audits. We're going to go over what they are, how they differ from private audits and how to submit a finding for them.
+
+![image-20250919231532343](SC-Security-note.assets/image-20250919231532343.png)
+
+## What is a Competitive Audit?
+
+### Competitive vs Private Audits
+
+Before we get to our report, I want to illustrate what a competitive audit is, and how it may differ from a private audit.
+
+***What is a competitive audit?\***
+
+Unlike a private audit, where a single security researcher (or a small team) would be working with a protocol directly, a competitive audit sees a protocol making their code base publicly available and having people compete to find vulnerabilities within it.
+
+I encourage you to checkout some of the past competitive audits on [**CodeHawks**](https://www.codehawks.com/contests), you can click 'View Final Report' To see a compilation of all the findings in a contest, who found it etc.
+
+In a competitive audit, you're competing to find *bugs*, you're paid if you find vulnerabilities.
+
+We can see how these payouts work by looking at the [**CodeHawks Docs**](https://docs.codehawks.com/). Findings rewards are ultimately broken down into shares and severity, where the system rewards finding more unique, difficult to find bugs.
+
+![competitive-audit1](SC-Security-note.assets/competitive-audit1.png)
+
+You can also find examples of scenarios and calculations on the [**CodeHawks Docs**](https://docs.codehawks.com/hawks-auditors/payouts).
+
+***How good are competitive audits?\***
+
+The quality of competitive audits has been found to be - incredible. To use a past contest on CodeHawks as an example, the Beedle-Fi audit resulted in a staggering number of findings.
+
+![competitive-audit2](SC-Security-note.assets/competitive-audit2.png)
+
+Security reviews of this nature consistently find more bugs that private reviews *and* they serve as the perfect platforms to gain experience and build your security researcher career.
+
+Many top security researchers started their careers in this space, and continue to compete in competitive audits throughout.
+
+Competitive audits are a tonne of fun, you can learn lots and of course you can win money.
+
+***How do I start with competitive audits?\***
+
+I'm glad you asked! CodeHawks hosts events called [**First Flights**](https://www.codehawks.com/first-flights), and we're going to have you do some of these!
+
+First Flights are simplified code bases (just like Puppy Raffle) that have been built specifically to ease newcomers into the auditing process, familiarize them with how competitive audits work and afford auditors an effective avenue through which to learn and grow their skills with real world experience.
+
+One additional benefit to using competitive audits as a platform to improve your skills is, once one concludes, all the validated findings are viewable, allowing an auditor to see which vulnerabilities they missed and how others are reporting their findings. This is hugely valuable for those looking to expand their skills.
+
+## Reporting Templates
+
+Throughout this course we have been, and will continue to use our [**audit-report-templating**](https://github.com/Cyfrin/audit-report-templating) repo to assist us with generating our final findings reports. I wanted to take a moment to make you aware of some alternatives, should you wish to try them out.
+
+### Cyfrin GitHub Report Template
+
+[**audit-repo-cloner**](https://github.com/Cyfrin/audit-repo-cloner)
+
+On the Cyfrin team, we won't write up reports in markdown, we actually report our findings through issues directly on the GitHub repo, this is beneficial for collaborative situations. We use this repo cloner to prepare a repo for an audit by the Cyfrin team. From the README:
+
+```markdown
+It will take the following steps:
+​
+1. Take the source repository you want to set up for audit
+2. Take the target repository name you want to use for the private --repo
+3. Add an issue_template to the repo, so issues can be formatted as audit findings, like:
+​
+'''
+**Description:**
+**Impact:**
+**Proof of Concept:**
+**Recommended Mitigation:**
+**[Project]:**
+**Cyfrin:**
+'''
+​
+4. Update labels to label issues based on severity and status
+5. Create an audit tag at the given commit hash (full SHA)
+6. Create branches for each of the auditors participating
+7. Create a branch for the final report
+8. Add the report-generator-template to the repo to make it easier to compile the report, and add a button in GitHub actions to re-generate the report on-demand
+9. Attempt to set up a GitHub project board
+```
+
+### Report Generator Template
+
+[**report-generator-template**](https://github.com/Cyfrin/report-generator-template)
+
+This is a fork of the [**Spearbit Report Generator**](https://github.com/spearbit-audits/report-generator-template) and is used to consolidate issues/projects on a GitHub repo into a PDF Audit report.
+
+From the README:
+
+This repository is meant to be a single-step solution to:
+
+```markdown
+This repository is meant to be a single-step solution to:
+​
+- Fetch all issues from a given repository
+- Sort them by severity according to their labels
+- Generate a single Markdown file with all issues sorted by descending severity
+- Integrate that Markdown file into a LaTeX template
+- Generate a PDF report with all the issues and other relevant information
+​
+```
+
+These tools/templates are especially great when working with a team. They save you from having to manually consolidate markdown write ups. If this is a method you'd like to try in your own auditing process, I encourage you to experiment and determine what works best for you!
 
 
 
 
 
 # TSwap
+
+
 
 
 
