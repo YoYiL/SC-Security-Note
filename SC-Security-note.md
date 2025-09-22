@@ -3644,11 +3644,349 @@ These tools/templates are especially great when working with a team. They save y
 
 
 
-
-
 # TSwap
 
+## What is a Dex?
 
+At it's highest level of abstraction what TSwap aims to do is: Allow users a permissionless way to swap assets between each other at a fair price.
+
+![what-is-a-dex1](SC-Security-note.assets/what-is-a-dex1.png)
+
+TSwap (based off Uniswap) is an example of a **Decentralized Exchange**, or a `DEX`.
+
+Check out the [**DEXes section of DeFiLlama**](https://defillama.com/protocols/Dexes) for a list of examples!
+
+## What is an Automated Market Maker (AMM)?
+
+TSwap is also en example of an Automated Market Maker (AMM).
+
+Automated Market Makers are different from a typical "order book" style exchange. Instead of an order book which attempts to match buy and sell orders of users, an AMM leverages `Pools` of an asset. Uniswap is a great example of this. Check out the [**Uniswap Explained video by WhiteboardCrypto**](https://www.youtube.com/watch?v=DLu35sIqVTM) to learn more in depth.
+
+In our next lesson, we're going take a closer look at AMMs and how they differ from order book exchanges.
+
+Additionally, check out [**this article by Chainlink**](https://chain.link/education-hub/what-is-an-automated-market-maker-amm) for more information on AMMs.
+
+### Order Book Exchanges
+
+An order book exchange is fundamentally very simple, it will track desired buy and sell orders and effectively try to match them.
+
+![what-is-an-amm1](SC-Security-note.assets/what-is-an-amm1.png)
+
+Order book exchanges come with a fatal flaw in a blockchain ecosystem though - cost.
+
+Any time a user posts an order, buy or sell, this is going to be a transaction, matching them will be a transaction, the tracking and managing of that data for the exchange has an overhead cost.
+
+An order book exchange on ethereum can rapidly become slow and expensive.
+
+### Automated Market Makers
+
+An AMM functions by leveraging asset pools with the goal of maintaining the ratio of assets traded with the pool.
+
+![what-is-an-amm2](SC-Security-note.assets/what-is-an-amm2.png)
+
+As we can see, as orders are placed against the liquidity pools the ratio between the two assets traded changes, this drives the price of the asset pair for the next trade when executed.
+
+When structured this way, any given user only needs to trade with the liquidity pool, in a single transaction to execute their trade.
+
+This is much less gas and computationally expensive in an environment like Ethereum.
+
+## Liquidity Providers
+
+### Why AMMs have Fees?
+
+Let's break down an AMM a little further.
+
+The first question that probably comes to mind is ***"Where did these pools of tokens (liquidity pools) come from?"\***
+
+This is where `liquidity providers` come in. `Liquidity providers` add their tokens to liquidity pools to fund the trading by users. In exchange a liquidity provider will often receive an LPToken (liquidity provider token) at the ratio of what they've contributed to the total pool.
+
+![liquidity-providers1](SC-Security-note.assets/liquidity-providers1.png)
+
+The next questions you're probably asking are ***"Why would anyone do that? What's an LP Token?"\***
+
+This is where `fees` come in. Let's look at a slightly adjusted diagram:
+
+![liquidity-providers2](SC-Security-note.assets/liquidity-providers2.png)
+
+
+
+Each transaction in a DEX like TSwap or Uniswap incurs a fee (we've used 0.3% as an example). This fee is typically added to the respective liquidity pool.
+
+The LPToken that `liquidity providers` hold affords them claim to a set ratio of tokens in the pool, which means as fees are collected their total claim value goes up! This is where `liquidity providers` make profit from this system.
+
+
+
+## Recon
+
+The next thing our repo's [**README**](https://github.com/Cyfrin/5-t-swap-audit/blob/main/README.md) says is that the protocol begins as a PoolFactory Creating pools of assets, all of the logic handing those assets is contained within the TSwapPool contract that's generated. From the docs:
+
+```solidity
+You can think of each TSwapPool contract as it's own exchange between exactly 2 assets. Any ERC20 and the WETH token. These pools allow users to permissionlessly swap between an ERC20 that has a pool and WETH. Once enough pools are created, users can easily "hop" between supported ERC20s
+```
+
+![tswap-recon-cont1](SC-Security-note.assets/tswap-recon-cont1.png)
+
+## Invariant/Properties
+
+### Levels to test invariants
+
+We are looking at 4 levels at assessing testing breaking invariants in smart contracts.
+
+1. Stateless fuzzing
+2. Open Stateful fuzzing
+3. Handler Stateful fuzzing
+4. Formal Verification
+
+They range from least -> most work, and least -> most confidence. 
+
+### 1. Stateless fuzzing - Open
+
+Stateless fuzzing (often known as just "fuzzing") is when you provide random data to a function to get some invariant or property to break. 
+
+It is "stateless" because after every fuzz run, it resets the state, or it starts over. 
+
+#### Written Example
+You can think of it like testing what methods pop a balloon. 
+1. Fuzz run 1:
+   1. Get a new balloon
+      1. Do 1 thing to try to pop it (ie: punch it, kick it, drop it)
+      2. Record whether or not it is popped
+2. Fuzz run 2:
+   1. Get a new balloon
+      1. Do 1 thing to try to pop it (ie: punch it, kick it, drop it)
+      2. Record whether or not it is popped
+3. *Repeat...* 
+
+#### Code Example
+
+<details>
+<summary>See example</summary>
+
+```javascript
+// myContract
+    // Invariant: This function should never return 0
+    function doMath(uint128 myNumber) public pure returns (uint256) {
+        if (myNumber == 2) {
+            return 0;
+        }
+        return 1;
+    }
+
+// Fuzz test that will (likely) catch the invariant break
+    function testFuzzPassesEasyInvariant(uint128 randomNumber) public view {
+        assert(myContract.doMath(randomNumber) != 0);
+    }
+```
+
+</details>
+
+#### Pros & Cons
+
+Pros:
+- Fast to write
+- Fast to test
+
+Cons:
+- It's stateless, so if a property is broken by calling different functions, it won't find the issue 
+- You can never be 100% sure it works, as it's random input
+
+![bad-rng.png](SC-Security-note.assets/bad-rng-175852957250315.png)
+*Source: https://www.pokecommunity.com/showthread.php?t=379445*
+
+### 2. Stateful fuzzing - Open
+
+Stateful fuzzing is when you provide random data to your system, and for 1 fuzz run your system starts from the resulting state of the previous input data.
+
+Or more simply, you keep doing random stuff to *the same* contract.
+
+#### Written Example
+You can think of it like testing what methods pop a balloon. 
+1. Fuzz run 1:
+   1. Get a new balloon
+      1. Do 1 thing to try to pop it (ie: punch it, kick it, drop it)
+      2. Record whether or not it is popped
+   2. If not popped
+      1. Try a different thing to pop it (ie: punch it, kick it, drop it)
+      2. Record whether or not it is popped
+   3. If not popped... *repeat for a certain number of times*
+2. Fuzz run 2:
+   1. Get a new balloon
+      1. Do 1 thing to try to pop it (ie: punch it, kick it, drop it)
+      2. Record whether or not it is popped
+   2. If not popped
+      1. Try a different thing to pop it (ie: punch it, kick it, drop it)
+      2. Record whether or not it is popped
+   3. If not popped... *repeat for a certain number of times*
+3. *Repeat*
+
+You can see the difference here, is we didn't get a new balloon every single "fuzz run". In **stateful fuzzing** we try many things to the same balloon before moving on. 
+
+#### Code Example
+
+<details>
+<summary>See example</summary>
+
+```javascript
+// myContract
+    uint256 public myValue = 1;
+    uint256 public storedValue = 100;
+    // Invariant: This function should never return 0
+    function doMoreMathAgain(uint128 myNumber) public returns (uint256) {
+        uint256 response = (uint256(myNumber) / 1) + myValue;
+        storedValue = response;
+        return response;
+    }
+    function changeValue(uint256 newValue) public {
+        myValue = newValue;
+    }
+
+// Test
+    // Setup
+    function setUp() public {
+        sfc = new StatefulFuzzCatches();
+        targetContract(address(sfc));
+    }
+
+    // Stateful fuzz that will (likely) catch the invariant break
+    function statefulFuzz_testMathDoesntReturnZero() public view {
+        assert(sfc.storedValue() != 0);
+    }
+```
+
+</details>
+
+
+
+#### Pros & Cons
+
+Pros:
+- Fast to write (not as fast as stateless fuzzing)
+- Can find bugs that are from calling functions in a specific order.
+
+Cons:
+- You can run into "path explosion" where there are too many possible paths, and the fuzzer finds nothing 
+- You can never be 100% sure it works, as it's random input
+
+
+### 3. Stateful Fuzzing - Handler
+
+Handler based stateful fuzzing is the same as Open stateful fuzzing, except we restrict the number of "random" things we can do. 
+
+If we have too many options, we may never randomly come across something that will actually break our invariant. So we restrict our random inputs to a set of specfic random actions that can be called. 
+
+
+#### Written Example
+You can think of it like testing what methods pop a balloon. 
+
+We've decided that we only want to test for dropping & kicking the balloon. 
+
+1. Fuzz run 1:
+   1. Get a new balloon
+      1. Do 1 thing to try to pop it (drop it or kick it)
+      2. Record whether or not it is popped
+   2. If not popped
+      1. Try a different thing to pop it (drop it or kick it)
+      2. Record whether or not it is popped
+   3. If not popped... *repeat for a certain number of times*
+2. Fuzz run 2:
+   1. Get a new balloon
+      1. Do 1 thing to try to pop it (drop it or kick it)
+      2. Record whether or not it is popped
+   2. If not popped
+      1. Try a different thing to pop it (drop it or kick it)
+      2. Record whether or not it is popped
+   3. If not popped... *repeat for a certain number of times*
+3. *Repeat*
+
+#### Code Example 
+
+This takes MUCH more work to set up in foundry, look at https://github.com/Cyfrin/sc-exploits-minimized/tree/main/test/invariant-break/HandlerStatefulFuzz folder for a full example.
+
+#### Pros & Cons
+
+Pros:
+- Can find bugs that are from calling functions in a specific order.
+- Restricts the "path explosion" problem where there are too many possible paths, so the fuzzer is more likely to find issues
+
+Cons:
+- Much longer to write correctly
+- It's easier to restrict too much so that you miss potential bugs
+
+#### Image of Handler fuzzing vs Open fuzzing
+
+![open-fuzzer.png](SC-Security-note.assets/open-fuzzer.png)
+
+### 4. Formal Verification
+
+Formal verification is the process of mathematically proving that a program does a specific thing, or proving it doesn't do a specific thing. 
+
+For invariants, it would be great to prove our programs always exert our invariant. 
+
+One of the most popular ways to do Formal Verification is through [Symbolic Execution](https://ethereum.stackexchange.com/questions/145411/is-the-solidity-built-in-smt-checker-a-form-of-symbolic-execution). Symbolic Execution is a means of analyzing a program to determine what inputs cause each part of a program to execute. It will convert the program to a symbolic expression (hence its name) to figure this out.
+
+#### FV TL;DR
+
+The summary of FV is:
+
+"It converts your functions to math, and then tries to prove some property on that math. Math can be proved. Math can be solved. Functions can not (unless they are transformed into math)."
+
+#### Written Example
+
+For example, take this function:
+
+```javascript
+function f(uint256 y) public {
+  uint256 z = y * 2;
+  if (z == 12) {
+    revert();
+  } 
+}
+```
+
+If we wanted to prove there is an input for function `f` such that it would never revert, we'd convert this to a mathematical expression, like such:
+
+```javascript
+z == 12 && // if z == 12, the program reverts
+y >= 0 && y < type(uint256).max && // y is a uint256, so it must be within the uint256 range
+z >= 0 && z < type(uint256).max && // z is also a uint256
+z == y * 2; // our math
+```
+
+*The above language is known as SMTLib, a domain specific language for Symbolic Execution.*
+
+In this example, we have a set of 4 boolean expressions. 
+
+#### SAT Solver
+
+We can then take this set of logical expressions and dump them into a [SAT Solver](https://en.wikipedia.org/wiki/Boolean_satisfiability_problem) (A SAT Solver is not symbolic execution, but right now is a popular next step). Which for now, you can think of as a black box that takes boolean expressions and tries to find an example that "satisfies" the set. For our example above, we are looking for a input y that enables the rest of the booleans to be true. 
+
+To dump this into a SAT solver, we need to convert our math to [CNF form](https://en.wikipedia.org/wiki/Conjunctive_normal_form) which might look something like this:
+
+```
+(z <= 12 OR y < 0 OR z < 0) AND (z >= 12 OR y < 0 OR z < 0) AND (z <= 12 OR y < 0 OR z > 2y) AND (z >= 12 OR y < 0 OR z > 2y) AND (z <= 12 OR y >= 0 OR z < 0) AND (z >= 12 OR y >= 0 OR z < 0) AND (z <= 12 OR y >= 0 OR z > 2y) AND (z >= 12 OR y >= 0 OR z > 2y)
+```
+
+Our SAT solver will then attempt to find a contradiction in our set of booleans, by randomly setting booleans to true / false, and seeing if the rest of the equation holds. 
+
+It's different from a fuzzer, as a fuzzer tries inputs for `y`. Whereas a SAT Solver will try different inputs for the booleans.  
+
+#### Pros & Cons
+
+Pros:
+- Can be 100% sure that a property is true/false
+
+Cons:
+- Can be hard to set up
+- Doesn't work in a lot of scenarios (like when there are too many paths)
+- Tools can be slow to run 
+- Can give you a false sense of security that there are no bugs. FV can only protect against 1 specific property! 
+
+### Resources
+
+- [ToB properties](https://github.com/crytic/properties): Fuzz tests based on properties of ERC20, ERC721, ERC4626, and other token standards.
+- [Example list of properties](https://github.com/crytic/properties/blob/main/PROPERTIES.md#erc20)
+- [Invariant/Stateful fuzz tests](https://book.getfoundry.sh/forge/invariant-testing)
+- [Handler based testing using WETH](https://mirror.xyz/horsefacts.eth/Jex2YVaO65dda6zEyfM_-DXlXhOWCAoSpOx5PLocYgw)
 
 
 
