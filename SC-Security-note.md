@@ -1594,9 +1594,9 @@ The severity of a finding can be categorized as **High**, **Medium**, or **Low**
 |                |            | **Impact** |            |         |
 | -------------- | ---------- | ---------- | ---------- | ------- |
 |                |            | **High**   | **Medium** | **Low** |
-|                | **High**   | H          | H/M        | M       |
-| **Likelihood** | **Medium** | H/M        | M          | M/L     |
-|                | **Low**    | M          | M/L        | L       |
+|                | **High**   | H          | M          | M       |
+| **Likelihood** | **Medium** | M          | M          | L       |
+|                | **Low**    | M          | L          | L       |
 
 ⚠️ **Subjectivity in Classification**
 
@@ -1644,7 +1644,86 @@ It is unlikely to occur. An example might be if a hard-to-change variable is set
 
 The author must demonstrate that their finding is computationally feasible in such scenarios.
 
+**High Likelihood (高可能性)**
 
+**特征：**
+
+- 攻击路径简单直接，无需特殊条件
+- 可以被自动化工具或脚本轻易利用
+- 正常用户操作就可能触发
+
+**示例：**
+
+```
+// 重入攻击 - 任何人都可以轻易利用
+function withdraw() external {
+    uint256 amount = balances[msg.sender];
+    (bool success,) = msg.sender.call{value: amount}("");
+    balances[msg.sender] = 0; // 状态更新在外部调用之后
+}
+
+// 整数溢出（Solidity < 0.8.0）
+function mint(uint256 amount) external {
+    totalSupply += amount; // 可能溢出
+}
+```
+
+**Medium Likelihood (中等可能性)**
+
+**特征：**
+
+- 需要特定条件或时机
+- 需要一定的技术知识或资源
+- 依赖于外部因素或合约状态
+
+**示例：**
+
+```
+// 需要特定的市场条件才能利用
+function liquidate(address user) external {
+    require(getHealthFactor(user) < 1e18, "User is healthy");
+    // 需要等待用户健康因子下降
+}
+
+// 需要管理员权限或特定角色
+function emergencyWithdraw() external onlyOwner {
+    // 需要获得或攻破管理员权限
+}
+```
+
+**Low Likelihood (低可能性)**
+
+**特征：**
+
+- 需要多个条件同时满足
+- 需要深度的技术专业知识
+- 依赖于罕见的边缘情况
+
+**示例：**
+
+```
+// 需要精确的时间窗口和特定的区块状态
+function timeBasedAttack() external {
+    require(block.timestamp % 3600 == 0, "Wrong timing");
+    require(block.number % 100 == 42, "Wrong block");
+    // 需要极其精确的时机
+}
+
+// 需要复杂的经济攻击向量
+function complexArbitrageAttack() external {
+    // 需要大量资金和复杂的多步骤操作
+}
+```
+
+#### 📊 **评估维度矩阵**
+
+| 维度           | High            | Medium           | Low            |
+| -------------- | --------------- | ---------------- | -------------- |
+| **技术门槛**   | 无需特殊技能    | 需要一定技术知识 | 需要专家级技能 |
+| **资源要求**   | 最小资源        | 中等资源         | 大量资源       |
+| **条件复杂度** | 无条件/简单条件 | 几个条件         | 多个复杂条件   |
+| **自动化程度** | 易于自动化      | 部分自动化       | 难以自动化     |
+| **发现难度**   | 容易发现        | 中等难度         | 很难发现       |
 
 #### Informational/Non-Crits/Gas Severity
 
