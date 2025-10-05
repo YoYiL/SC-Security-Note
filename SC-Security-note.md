@@ -103,6 +103,7 @@
       - [How to evaluate a finding severity](#how-to-evaluate-a-finding-severity)
       - [How to evaluate the impact of a finding](#how-to-evaluate-the-impact-of-a-finding)
       - [How to evaluate the likelihood of exploitation of a finding](#how-to-evaluate-the-likelihood-of-exploitation-of-a-finding)
+      - [📊 **评估维度矩阵**](#-评估维度矩阵)
       - [Informational/Non-Crits/Gas Severity](#informationalnon-critsgas-severity)
   - [Generate a PDF audit report](#generate-a-pdf-audit-report)
   - [Isolated Dev Environments](#isolated-dev-environments)
