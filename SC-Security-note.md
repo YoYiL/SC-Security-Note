@@ -309,6 +309,84 @@
 
 
 
+# WSL 与 VS Code 开发环境配置
+
+## 一、WSL 已安装工具包
+
+### 1.1 版本控制与基础工具
+- **git** - 版本控制系统
+- **make tools** - 构建工具
+
+### 1.2 以太坊/Solidity 开发工具
+- **foundry** - 以太坊开发工具链
+- **Slither-analyzer** - 智能合约静态分析工具
+- **Aderyn** - 基于 Rust 的静态分析工具
+
+### 1.3 代码分析工具
+- **cloc** - 代码行数统计工具
+- **Header** - 头文件工具
+
+---
+
+## 二、生成 PDF 审计报告流程
+
+repo：https://github.com/Cyfrin/audit-report-templating
+
+### 2.1 准备工作
+
+1. 将所有发现记录到 Markdown 文件（如 `report-example.md`）
+2. 在文件顶部添加元数据信息
+
+### 2.2 安装必要软件
+1. 安装 [Pandoc](https://pandoc.org/installing.html)
+2. 安装 [LaTeX](https://www.latex-project.org/get/)
+3. 如遇到 `File 'footnotebackref.sty' not found` 错误，需安装[额外包](https://github.com/Wandmalfarbe/pandoc-latex-template/issues/141)
+
+### 2.3 配置模板
+1. 下载 `eisvogel.latex` 模板
+2. 将模板放置到 `~/.pandoc/templates/` 目录
+3. 将 Logo 文件（PDF 格式）命名为 `logo.pdf` 并放置在工作目录
+
+### 2.4 生成报告
+执行以下命令：
+```bash
+pandoc report-example.md -o report.pdf --from markdown --template=eisvogel --listings
+```
+
+---
+
+## 三、VS Code 扩展清单
+
+### 3.1 开发辅助工具
+- **Comment Divider** - 注释分隔符，美化代码注释
+- **Git History** - Git 历史记录查看
+- **GitHub Copilot** - AI 代码助手
+- **Prettier - Code Formatter** - 代码格式化工具
+- **vscode-pdf** - PDF 文件查看器
+
+### 3.2 Web 开发
+- **Live Server** - 本地开发服务器，支持热重载
+
+### 3.3 Solidity 智能合约开发
+- **Solidity - Juan Blanco** - Solidity 语言支持
+- **Solidity Metrics** - Solidity 代码度量分析
+- **Solidity Visual Developer** - 提供安全为中心的语法和语义高亮
+
+### 3.4 实用工具
+- **Pretty JSON** - JSON 格式化工具
+
+### 3.5 编辑器主题
+- **Dracula Theme Official** - Dracula 官方主题
+
+---
+
+## 四、安全措施
+
+### 4.1 开发环境隔离
+- **Dev Container** - 创建隔离的开发容器环境，防止潜在攻击和依赖污染
+
+---
+
 
 
 # Dangerous Functions
